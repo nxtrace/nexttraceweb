@@ -44,11 +44,16 @@ def check_timeouts():
         time.sleep(1)
 
 
-def cleanup_client_state(sid):
-    task_removed = clients.pop(sid, None)
-    if task_removed:
+def cleanup_client_state(sid, task=None):
+    current_task = clients.get(sid)
+    same_task = task is None or current_task is task
+    if same_task and current_task is not None:
+        clients.pop(sid, None)
         logging.info(f"Client {sid} removed from clients dictionary")
-    if client_last_active.pop(sid, None) is not None:
+    elif not same_task:
+        logging.debug(f"Skip cleanup for client {sid}: task mismatch")
+
+    if same_task and client_last_active.pop(sid, None) is not None:
         logging.debug(f"Client {sid} removed from last active tracker")
 
 
@@ -135,7 +140,7 @@ class NextTraceTask:
             if not self._complete_emitted:
                 self._complete_emitted = True
                 self.socketio.emit('nexttrace_complete', room=self.sid)
-                cleanup_client_state(self.sid)
+                cleanup_client_state(self.sid, task=self)
 
     def emit_error_row(self, message):
         error_payload = json.dumps(['-1', '', '', '0', 'ERROR', '', message], ensure_ascii=False)
@@ -235,6 +240,10 @@ def start_nexttrace(data):
 
         # 确保数据是一个字典且包含 'ip' 键
         if isinstance(data, dict) and 'ip' in data:
+            existing_task = clients.get(request.sid)
+            if existing_task:
+                logging.info(f"Client {request.sid} requested new trace, stopping existing task first")
+                stop_nexttrace_for_sid(request.sid)
             logging.info(f"Client {request.sid} start nexttrace, params: {data}")
             params = data['ip']
             if params:

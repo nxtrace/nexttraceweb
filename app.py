@@ -41,8 +41,15 @@ def check_timeouts():
             if time.time() - last_active > time_limit:
                 logging.debug(f"Client {sid} timed out")
                 stop_nexttrace_for_sid(sid)
-                del client_last_active[sid]
         time.sleep(1)
+
+
+def cleanup_client_state(sid):
+    task_removed = clients.pop(sid, None)
+    if task_removed:
+        logging.info(f"Client {sid} removed from clients dictionary")
+    if client_last_active.pop(sid, None) is not None:
+        logging.debug(f"Client {sid} removed from last active tracker")
 
 
 def stop_nexttrace_for_sid(sid):
@@ -64,10 +71,6 @@ def stop_nexttrace_for_sid(sid):
             task.process.kill()
             logging.info(f"Process killed forcefully for client {sid}")
     task.emit_complete()
-    if sid in clients:
-        del clients[sid]
-        logging.info(f"Client {sid} removed from clients dictionary after process termination")
-    client_last_active.pop(sid, None)
 
 
 Thread(target=check_timeouts, daemon=True).start()
@@ -132,6 +135,11 @@ class NextTraceTask:
             if not self._complete_emitted:
                 self._complete_emitted = True
                 self.socketio.emit('nexttrace_complete', room=self.sid)
+                cleanup_client_state(self.sid)
+
+    def emit_error_row(self, message):
+        error_payload = json.dumps(['-1', '', '', '0', 'ERROR', '', message], ensure_ascii=False)
+        self.socketio.emit('nexttrace_output', error_payload, room=self.sid)
 
     def run(self):
         fixParam = '--map --raw -q 1 --send-time 1'  # -d disable-geoip
@@ -143,14 +151,20 @@ class NextTraceTask:
 
         pattern = re.compile(r'[&;<>\"\'()|\[\]{}$#!%*+=]')
         if pattern.search(self.params):
-            self.socketio.emit('nexttrace_output', 'Invalid params', room=self.sid)
+            self.emit_error_row('参数不合法，任务未启动')
             self.emit_complete()
-            raise ValueError('Invalid params')
+            return
         logging.debug(f"cmd: {[self.nexttrace_path] + self.params.split() + fixParam.split()}")
-        self.process = subprocess.Popen(
-            [self.nexttrace_path] + self.params.split() + fixParam.split(),
-            stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True, env=process_env, bufsize=1
-        )
+        try:
+            self.process = subprocess.Popen(
+                [self.nexttrace_path] + self.params.split() + fixParam.split(),
+                stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True, env=process_env, bufsize=1
+            )
+        except OSError as exc:
+            logging.error(f"Failed to start nexttrace for client {self.sid}: {exc}")
+            self.emit_error_row('启动 nexttrace 失败，请检查服务器配置')
+            self.emit_complete()
+            return
         output_monitor = OutputMonitor(self.process, self.socketio, self.sid, options)
         output_monitor_flag = True
 

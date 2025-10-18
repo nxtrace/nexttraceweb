@@ -3,12 +3,23 @@ FROM golang:1.25-alpine3.21 AS builder
 # 安装所需的软件包
 RUN apk update && apk add --no-cache git
 
-# 克隆NEXTTRACE源代码并编译
+# 克隆NEXTTRACE源代码并编译（内联计算版本信息并注入到 -ldflags）
 WORKDIR /build
-RUN git clone https://github.com/nxtrace/Ntrace-core.git . && \
-    go clean -modcache && \
-    go mod download && \
-    go build -trimpath -ldflags '-w -s -checklinkname=0' -o nexttrace .
+RUN set -eux; \
+    git clone https://github.com/nxtrace/Ntrace-core.git . ; \
+    go clean -modcache; \
+    go mod download; \
+    BUILD_VERSION="$(git describe --tags --always 2>/dev/null || true)"; \
+    [ -n "$BUILD_VERSION" ] || BUILD_VERSION=dev; \
+    BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"; \
+    COMMIT_SHA1="$(git rev-parse --short HEAD 2>/dev/null || true)"; \
+    [ -n "$COMMIT_SHA1" ] || COMMIT_SHA1=unknown; \
+    LD_PKG="$(go list -m)/config"; \
+    LD_BASE="-X ${LD_PKG}.Version=${BUILD_VERSION} \
+             -X ${LD_PKG}.BuildDate=${BUILD_DATE} \
+             -X ${LD_PKG}.CommitID=${COMMIT_SHA1} \
+             -w -s -checklinkname=0"; \
+    go build -trimpath -ldflags "${LD_BASE}" -o nexttrace .
 
 FROM ubuntu:22.04
 

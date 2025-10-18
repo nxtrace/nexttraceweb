@@ -5,7 +5,7 @@ import re
 import subprocess
 import threading
 import time
-from threading import Thread
+from threading import Thread, Event
 
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
@@ -47,7 +47,13 @@ def check_timeouts():
 
 def stop_nexttrace_for_sid(sid):
     task = clients.get(sid)
-    if task and task.process:
+    if not task:
+        logging.debug(f"No running task found for client {sid} when attempting to stop")
+        return
+
+    task.request_stop()
+
+    if task.process:
         logging.info(f"Attempting to terminate process for client {sid}")
         task.process.terminate()
         try:
@@ -57,10 +63,11 @@ def stop_nexttrace_for_sid(sid):
             logging.warning(f"Process termination timeout for client {sid}, forcing kill")
             task.process.kill()
             logging.info(f"Process killed forcefully for client {sid}")
-        socketio.emit('nexttrace_complete', room=sid)
-        if sid in clients:
-            del clients[sid]
-            logging.info(f"Client {sid} removed from clients dictionary after process termination")
+    task.emit_complete()
+    if sid in clients:
+        del clients[sid]
+        logging.info(f"Client {sid} removed from clients dictionary after process termination")
+    client_last_active.pop(sid, None)
 
 
 Thread(target=check_timeouts, daemon=True).start()
@@ -102,6 +109,29 @@ class NextTraceTask:
         self.params = params
         self.nexttrace_path = _nexttrace_path
         self.process = None
+        self._stop_event = Event()
+        self._complete_lock = threading.Lock()
+        self._complete_emitted = False
+
+    def request_stop(self):
+        logging.debug(f"Stop requested for client {self.sid}")
+        self._stop_event.set()
+        if self.process and self.process.stdout:
+            try:
+                self.process.stdout.close()
+            except Exception as exc:  # 捕获并记录异常，避免线程被异常中断
+                logging.debug(f"Closing stdout failed for client {self.sid}: {exc}")
+        if self.process and self.process.stdin:
+            try:
+                self.process.stdin.close()
+            except Exception as exc:
+                logging.debug(f"Closing stdin failed for client {self.sid}: {exc}")
+
+    def emit_complete(self):
+        with self._complete_lock:
+            if not self._complete_emitted:
+                self._complete_emitted = True
+                self.socketio.emit('nexttrace_complete', room=self.sid)
 
     def run(self):
         fixParam = '--map --raw -q 1 --send-time 1'  # -d disable-geoip
@@ -114,7 +144,7 @@ class NextTraceTask:
         pattern = re.compile(r'[&;<>\"\'()|\[\]{}$#!%*+=]')
         if pattern.search(self.params):
             self.socketio.emit('nexttrace_output', 'Invalid params', room=self.sid)
-            self.socketio.emit('nexttrace_complete', room=self.sid)
+            self.emit_complete()
             raise ValueError('Invalid params')
         logging.debug(f"cmd: {[self.nexttrace_path] + self.params.split() + fixParam.split()}")
         self.process = subprocess.Popen(
@@ -124,27 +154,43 @@ class NextTraceTask:
         output_monitor = OutputMonitor(self.process, self.socketio, self.sid, options)
         output_monitor_flag = True
 
-        for line in iter(self.process.stdout.readline, ''):
-            logging.debug(f"line: {line}")
-            if re.match(r'^\d+\..*$', line):
-                options.append(line.split()[1])
-                if output_monitor_flag:
-                    output_monitor.start_newline_inserter(timeout=0.1)  # 0.1 seconds
-                    output_monitor_flag = False
-            elif re.match(r'^\d+\|', line):
-                line_split = line.split('|')
-                res = line_split[0:5] + [''.join(line_split[5:9])] + line_split[9:10]
-                if '||||||' in line:
-                    res = line_split[0:1] + ['', '', '', '', '', '']
-                logging.debug(f"{res}")
-                res_str = json.dumps(obj=res, ensure_ascii=False)
-                logging.debug(f"nexttrace_output: {res_str}")
-                self.socketio.emit('nexttrace_output', res_str, room=self.sid)
-                client_last_active[self.sid] = time.time()  # 更新客户端的最后活跃时间
+        try:
+            while True:
+                if self._stop_event.is_set():
+                    logging.debug(f"Stop event set before reading stdout for client {self.sid}")
+                    break
+                try:
+                    line = self.process.stdout.readline()
+                except ValueError:
+                    logging.debug(f"Stdout closed while reading for client {self.sid}")
+                    break
 
-            if self.process.poll() is not None:
-                self.socketio.emit('nexttrace_complete', room=self.sid)
-                break
+                if line == '':
+                    break
+
+                if self._stop_event.is_set():
+                    logging.debug(f"Stop event set after reading stdout for client {self.sid}")
+                    break
+
+                logging.debug(f"line: {line}")
+                if re.match(r'^\d+\..*$', line):
+                    options.append(line.split()[1])
+                    if output_monitor_flag:
+                        output_monitor.start_newline_inserter(timeout=0.1)  # 0.1 seconds
+                        output_monitor_flag = False
+                elif re.match(r'^\d+\|', line):
+                    line_split = line.split('|')
+                    res = line_split[0:5] + [''.join(line_split[5:9])] + line_split[9:10]
+                    if '||||||' in line:
+                        res = line_split[0:1] + ['', '', '', '', '', '']
+                    logging.debug(f"{res}")
+                    res_str = json.dumps(obj=res, ensure_ascii=False)
+                    logging.debug(f"nexttrace_output: {res_str}")
+                    self.socketio.emit('nexttrace_output', res_str, room=self.sid)
+                    client_last_active[self.sid] = time.time()  # 更新客户端的最后活跃时间
+
+        finally:
+            self.emit_complete()
 
     def process_input(self, data):
         if self.process:

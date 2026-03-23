@@ -1,42 +1,210 @@
+name: ci
+
 permissions:
   contents: read
-name: 'docker image build'
 
 on:
-  workflow_dispatch:
+  pull_request:
   push:
     branches:
       - master
-    paths:
-      - "**/*.py"
-      - "**/*.html"
-      - "**/*.css"
-      - "**/nginx.conf"
-      - "**/Dockerfile"
-      - "**/entrypoint.sh"
-      - "**/requirements.txt"
+    tags:
+      - "v*"
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 jobs:
-  docker:
+  python-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Compile Python modules
+        run: python -m py_compile app.py nexttrace_mtr.py
+
+  frontend-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-      - name: Checkout submodules
-        run: git submodule update --init --recursive
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check browser scripts
+        run: |
+          node --check assets/js/main.js
+          node --check assets/js/mtr-agg.js
+          node --check assets/js/settingsmenu.js
+
+      - name: Run frontend tests
+        run: node --test tests/*.test.cjs
+
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pip-audit
+
+      - name: Audit Python dependencies
+        run: pip-audit -r requirements.txt
+
+      - name: Verify baseline hardening
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          required_snippets = {
+              "app.py": [
+                  "NTWA_SECRET_KEY",
+                  "NTWA_TRUSTED_HOSTS",
+                  "SESSION_COOKIE_HTTPONLY",
+                  "/healthz",
+              ],
+              "Dockerfile": [
+                  "HEALTHCHECK",
+                  "gunicorn",
+              ],
+              "nginx.conf": [
+                  "Content-Security-Policy",
+                  "X-Content-Type-Options",
+                  "Referrer-Policy",
+                  "X-Frame-Options",
+                  "server_tokens off",
+              ],
+              ".github/workflows/docker-image.yml": [
+                  "pull_request:",
+                  "schedule:",
+                  "docker-smoke",
+              ],
+          }
+
+          missing = []
+          for path, snippets in required_snippets.items():
+              content = Path(path).read_text()
+              for snippet in snippets:
+                  if snippet not in content:
+                      missing.append(f"{path} missing {snippet!r}")
+
+          if missing:
+              raise SystemExit("\n".join(missing))
+          PY
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    needs:
+      - python-check
+      - frontend-check
+      - security-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build smoke image
+        run: docker build -t nexttraceweb:smoke .
+
+      - name: Start container
+        run: |
+          cid="$(docker run -d -p 30080:30080 nexttraceweb:smoke)"
+          echo "CONTAINER_ID=${cid}" >> "$GITHUB_ENV"
+
+      - name: Wait for healthz
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:30080/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs "$CONTAINER_ID"
+          exit 1
+
+      - name: Verify container exits when gunicorn dies
+        run: |
+          gunicorn_pid="$(docker exec "$CONTAINER_ID" pgrep -f 'gunicorn.*app:app' | head -n1)"
+          docker exec "$CONTAINER_ID" kill -TERM "$gunicorn_pid"
+          timeout 20s docker wait "$CONTAINER_ID"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker logs "$CONTAINER_ID"
+
+      - name: Cleanup container
+        if: always()
+        run: docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+
+  publish:
+    runs-on: ubuntu-latest
+    needs:
+      - python-check
+      - frontend-check
+      - security-check
+      - docker-smoke
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build and push
-        uses: docker/build-push-action@v3
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          tags="tsosc/nexttraceweb:sha-${short_sha}"
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            tags="${tags},tsosc/nexttraceweb:latest"
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tags="${tags},tsosc/nexttraceweb:${GITHUB_REF_NAME}"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64/v8
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: tsosc/nexttraceweb:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

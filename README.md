@@ -44,9 +44,11 @@ NextTrace Web is a spin-off of the [NextTrace](https://github.com/nxtrace/NTrace
 
 ```bash
 docker pull tsosc/nexttraceweb
-docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb
-# Visit http://your_ip:30080
+docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
+# Visit http://127.0.0.1:30080
 ```
+
+Expose the service to the Internet through your own reverse proxy or gateway. This project does not ship an in-app login flow.
 
 ### Custom Address & Port
 
@@ -61,4 +63,43 @@ docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 80
 
 # Listen on IPv6 loopback
 docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb [::1]:30080
+```
+
+## Runtime Notes
+
+- Health endpoint: `GET /healthz`
+- The container now exits when `gunicorn` or `nginx` dies, so supervisors can restart it instead of leaving a half-dead process tree behind.
+- `nexttrace_error` is now a structured payload with `code` and `message`, plus `retry_after_seconds` on rate-limit and capacity rejections.
+
+## Security Defaults
+
+- Configure `NTWA_SECRET_KEY` in production. If omitted, the app generates a temporary random key and logs a warning.
+- Recommended: set `NTWA_TRUSTED_HOSTS=trace.example.com` behind a reverse proxy.
+- Set `NTWA_SESSION_COOKIE_SECURE=true` only when the outer proxy serves HTTPS.
+- Abuse controls:
+  - `NTWA_MIN_START_INTERVAL_SECONDS`
+  - `NTWA_MAX_ACTIVE_TRACES`
+  - `NTWA_TRACE_IDLE_TIMEOUT_SECONDS`
+  - `NTWA_TRACE_MAX_DURATION_SECONDS`
+
+## External Auth Example
+
+Minimal Nginx example with Basic Auth in front of the container:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name trace.example.com;
+
+    auth_basic "restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_pass http://127.0.0.1:30080;
+    }
+}
 ```

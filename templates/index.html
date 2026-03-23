@@ -4,15 +4,16 @@
     <title>NextTrace Web</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="/assets/css/m.css" type="text/css">
-    <script src="/assets/js/socket.io.js"></script>
-    <script src="/assets/js/main.js"></script>
+    <script src="/assets/js/socket.io.js" defer></script>
+    <script src="/assets/js/mtr-agg.js" defer></script>
+    <script src="/assets/js/main.js" defer></script>
     <script src="/assets/js/settingsmenu.js" defer></script>
 </head>
 <body>
 <h1>NextTrace Web</h1>
 <form>
     <label for="params">
-        <input type="text" id="params" placeholder="IP/Domain/URL" onkeydown="handleKeyPress(event)">
+        <input type="text" id="params" placeholder="IP/Domain/URL">
     </label>
     <label for="ipVersion"></label>
     <select id="ipVersion" name="protocol">
@@ -26,9 +27,9 @@
         <option value="tcp">TCP</option>
         <option value="udp">UDP</option>
     </select>
-    <button type="button" onclick="startNexttrace()">Start Nexttrace</button>
-    <button type="button" onclick="stopNexttrace()">Stop Nexttrace</button>
-    <button type="button" onclick="resetForm()">Reset</button>
+    <button type="button" id="startBtn">Start Nexttrace</button>
+    <button type="button" id="stopBtn">Stop Nexttrace</button>
+    <button type="button" id="resetBtn">Reset</button>
     <button id="settingBtn">Settings</button>
     <div id="settingMenu" class="floating-menu">
         <label for="language">Language:</label>
@@ -85,8 +86,8 @@
         <button id="saveBtn">Save</button>
     </div>
     <div id="ipSelector" class="modal-content">
-        <span class="close">&times;</span>
-        <p>请选择一个IP地址:</p>
+        <span class="close" id="ipSelectorClose">&times;</span>
+        <p id="ipSelectorTitle">请选择一个IP地址:</p>
         <div id="ip-list"></div>
     </div>
 </form>
@@ -97,7 +98,7 @@
         <th>IP</th>
         <th>ASN</th>
         <th>LOCATION</th>
-        <th>DOMAIN</th>
+        <th>OWNER</th>
         <th>LOSS%</th>
         <th>SENT</th>
         <th>LAST</th>

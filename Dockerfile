@@ -1,12 +1,10 @@
 FROM golang:1.25-alpine3.21 AS builder
 
-# 安装所需的软件包
 RUN apk update && apk add --no-cache git
 
-# 克隆NEXTTRACE源代码并编译（内联计算版本信息并注入到 -ldflags）
 WORKDIR /build
 RUN set -eux; \
-    git clone https://github.com/nxtrace/Ntrace-core.git . ; \
+    git clone https://github.com/nxtrace/Ntrace-core.git .; \
     go clean -modcache; \
     go mod download; \
     BUILD_VERSION="$(git describe --tags --always 2>/dev/null || true)"; \
@@ -23,38 +21,36 @@ RUN set -eux; \
 
 FROM ubuntu:22.04
 
-# 安装所需的软件包
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y python3-pip nginx && \
+    apt-get install -y --no-install-recommends python3 python3-pip nginx ca-certificates procps && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 安装Python依赖包
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
-# 从构建阶段复制NEXTTRACE二进制文件到最终镜像
 COPY --from=builder /build/nexttrace /usr/local/bin/nexttrace
 RUN chmod +x /usr/local/bin/nexttrace
 
-# 复制应用程序文件
+WORKDIR /app
 COPY app.py /app/app.py
-
-# 复制templates和assets文件夹
+COPY nexttrace_mtr.py /app/nexttrace_mtr.py
 COPY templates /app/templates
 COPY assets /app/assets
-
-# 配置Nginx
-COPY nginx.conf /etc/nginx/nginx.conf
-
-# 设置工作目录
-WORKDIR /app
-
-# Copy start.sh to the container
 COPY entrypoint.sh /app/entrypoint.sh
+COPY nginx.conf /etc/nginx/nginx.conf.template
+
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 30080
 
-# 设置脚本作为入口点
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python3 -c "import sys, urllib.request; \
+response = urllib.request.urlopen('http://127.0.0.1:30080/healthz', timeout=4); \
+sys.exit(0 if response.status == 200 else 1)"
+
 ENTRYPOINT ["/app/entrypoint.sh"]

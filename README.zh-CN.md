@@ -34,8 +34,8 @@ Inspired by PING.PE
 推荐使用Docker安装
 ```bash
 docker pull tsosc/nexttraceweb
-docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb
-# 使用 http://your_ip:30080 访问
+docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
+# 使用 http://127.0.0.1:30080 访问
 ```
 若要使用其他地址和端口，请在docker run时加入参数
 ```bash
@@ -45,4 +45,46 @@ docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 80
 # 监听所有IP的80端口
 docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb [::1]:30080
 # 监听[::1]:30080
+```
+
+建议不要直接把服务裸露在公网，认证和访问控制请放在外层反代或网关上处理。
+
+## 运行时说明
+
+- 健康检查接口：`GET /healthz`
+- 容器现在会在 `gunicorn` 或 `nginx` 任一核心进程退出时整体退出，便于外部 supervisor 正常拉起，而不是留下“容器还活着、服务已经死了”的假活状态。
+- `nexttrace_error` 现在是结构化载荷，至少包含 `code` 和 `message`；限流/容量拒绝还会带 `retry_after_seconds`。
+
+## 安全相关环境变量
+
+- `NTWA_SECRET_KEY`
+- `NTWA_TRUSTED_HOSTS`
+- `NTWA_SESSION_COOKIE_SECURE`
+- `NTWA_MIN_START_INTERVAL_SECONDS`
+- `NTWA_MAX_ACTIVE_TRACES`
+- `NTWA_TRACE_IDLE_TIMEOUT_SECONDS`
+- `NTWA_TRACE_MAX_DURATION_SECONDS`
+
+生产环境请显式配置 `NTWA_SECRET_KEY`。如果不配置，应用会生成临时随机值并打印告警。
+
+## 外层鉴权示例
+
+下面是一个最小 Nginx Basic Auth 反代示例：
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name trace.example.com;
+
+    auth_basic "restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_pass http://127.0.0.1:30080;
+    }
+}
 ```

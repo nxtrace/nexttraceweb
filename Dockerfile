@@ -1,25 +1,12 @@
-FROM golang:1.26.1-alpine3.22 AS builder
-
-RUN apk update && apk add --no-cache git
-
-WORKDIR /build
-RUN set -eux; \
-    git clone https://github.com/nxtrace/Ntrace-core.git .; \
-    go clean -modcache; \
-    go mod download; \
-    BUILD_VERSION="$(git describe --tags --always 2>/dev/null || true)"; \
-    [ -n "$BUILD_VERSION" ] || BUILD_VERSION=dev; \
-    BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"; \
-    COMMIT_SHA1="$(git rev-parse --short HEAD 2>/dev/null || true)"; \
-    [ -n "$COMMIT_SHA1" ] || COMMIT_SHA1=unknown; \
-    LD_PKG="$(go list -m)/config"; \
-    LD_BASE="-X ${LD_PKG}.Version=${BUILD_VERSION} \
-             -X ${LD_PKG}.BuildDate=${BUILD_DATE} \
-             -X ${LD_PKG}.CommitID=${COMMIT_SHA1} \
-             -w -s -checklinkname=0"; \
-    go build -trimpath -ldflags "${LD_BASE}" -o nexttrace .
+ARG NEXTTRACE_RELEASE_TAG=latest
+ARG NEXTTRACE_ASSET_PREFIX=ntr
 
 FROM ubuntu:22.04
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG NEXTTRACE_RELEASE_TAG
+ARG NEXTTRACE_ASSET_PREFIX
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
@@ -33,8 +20,34 @@ RUN apt-get update && \
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
-COPY --from=builder /build/nexttrace /usr/local/bin/nexttrace
-RUN chmod +x /usr/local/bin/nexttrace
+RUN python3 - <<'PY'
+import os
+import stat
+import urllib.request
+
+target_os = os.environ["TARGETOS"]
+target_arch = os.environ["TARGETARCH"]
+asset_prefix = os.environ["NEXTTRACE_ASSET_PREFIX"]
+release_tag = os.environ["NEXTTRACE_RELEASE_TAG"]
+
+asset_map = {
+    ("linux", "amd64"): f"{asset_prefix}_linux_amd64",
+    ("linux", "arm64"): f"{asset_prefix}_linux_arm64",
+}
+
+asset_name = asset_map.get((target_os, target_arch))
+if not asset_name:
+    raise SystemExit(f"Unsupported platform: {target_os}/{target_arch}")
+
+release_path = "latest/download" if release_tag == "latest" else f"download/{release_tag}"
+url = f"https://github.com/nxtrace/NTrace-core/releases/{release_path}/{asset_name}"
+destination = "/usr/local/bin/nexttrace"
+
+with urllib.request.urlopen(url) as response, open(destination, "wb") as output:
+    output.write(response.read())
+
+os.chmod(destination, os.stat(destination).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+PY
 
 WORKDIR /app
 COPY app.py /app/app.py

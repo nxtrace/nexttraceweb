@@ -1,18 +1,11 @@
 import unittest
-from unittest import mock
 
-from nexttrace_mtr import build_mtr_raw_command, build_process_env, parse_mtr_raw_line, resolve_mtr_raw_fixed_args
+from nexttrace_mtr import build_mtr_raw_command, build_process_env, parse_mtr_raw_line
 
 
 class BuildMTRRawCommandTests(unittest.TestCase):
-    def setUp(self):
-        resolve_mtr_raw_fixed_args.cache_clear()
-
     def test_builds_mtr_raw_command_without_legacy_flags(self):
-        help_output = "usage: nexttrace\n  -t  --mtr\n  -M  --map\n      --raw\n"
-
-        with mock.patch("nexttrace_mtr.read_help_output", return_value=help_output):
-            command = build_mtr_raw_command('/usr/local/bin/nexttrace', '1.1.1.1 --ipv4 --tcp')
+        command = build_mtr_raw_command('/usr/local/bin/nexttrace', '1.1.1.1 --ipv4 --tcp')
 
         self.assertEqual(
             command,
@@ -21,19 +14,16 @@ class BuildMTRRawCommandTests(unittest.TestCase):
                 '1.1.1.1',
                 '--ipv4',
                 '--tcp',
-                '--mtr',
                 '--raw',
-                '--map',
             ],
         )
         self.assertNotIn('-q', command)
         self.assertNotIn('--send-time', command)
+        self.assertNotIn('--mtr', command)
+        self.assertNotIn('--map', command)
 
     def test_accepts_pre_split_parameter_list(self):
-        help_output = "usage: nexttrace\n  -t  --mtr\n  -M  --map\n      --raw\n"
-
-        with mock.patch("nexttrace_mtr.read_help_output", return_value=help_output):
-            command = build_mtr_raw_command('/usr/local/bin/nexttrace', ['1.1.1.1', '--udp'])
+        command = build_mtr_raw_command('/usr/local/bin/nexttrace', ['1.1.1.1', '--udp'])
 
         self.assertEqual(
             command,
@@ -41,23 +31,6 @@ class BuildMTRRawCommandTests(unittest.TestCase):
                 '/usr/local/bin/nexttrace',
                 '1.1.1.1',
                 '--udp',
-                '--mtr',
-                '--raw',
-                '--map',
-            ],
-        )
-
-    def test_uses_ntr_compatible_raw_only_flags_when_mtr_is_unsupported(self):
-        help_output = "usage: ntr\n      --raw\n"
-
-        with mock.patch("nexttrace_mtr.read_help_output", return_value=help_output):
-            command = build_mtr_raw_command('/usr/local/bin/nexttrace', ['1.1.1.1'])
-
-        self.assertEqual(
-            command,
-            [
-                '/usr/local/bin/nexttrace',
-                '1.1.1.1',
                 '--raw',
             ],
         )

@@ -9,7 +9,6 @@ import unittest
 from unittest import mock
 
 import app as app_module
-import nexttrace_mtr
 
 
 class FakePipe:
@@ -245,12 +244,8 @@ class AppRuntimeTests(unittest.TestCase):
                 "2|*||||||||||\n",
             ]
         )
-        nexttrace_mtr.resolve_mtr_raw_fixed_args.cache_clear()
-        help_output = "usage: nexttrace\n  -t  --mtr\n  -M  --map\n      --raw\n"
 
-        with mock.patch.object(app_module.subprocess, "Popen", FakePopen), mock.patch(
-            "nexttrace_mtr.read_help_output", return_value=help_output
-        ):
+        with mock.patch.object(app_module.subprocess, "Popen", FakePopen):
             self.socket_client.emit(
                 "start_nexttrace",
                 {
@@ -265,16 +260,15 @@ class AppRuntimeTests(unittest.TestCase):
         self.assertEqual(raw_packet["args"][0]["ip"], "1.1.1.1")
         self.assertEqual(complete_packet["name"], "nexttrace_complete")
         self.assertTrue(FakePopen.instances)
-        self.assertIn("--mtr", FakePopen.instances[0].cmd)
         self.assertIn("--raw", FakePopen.instances[0].cmd)
-        self.assertIn("--map", FakePopen.instances[0].cmd)
         self.assertNotIn("-q", FakePopen.instances[0].cmd)
         self.assertNotIn("--send-time", FakePopen.instances[0].cmd)
+        self.assertNotIn("--mtr", FakePopen.instances[0].cmd)
+        self.assertNotIn("--map", FakePopen.instances[0].cmd)
 
     def test_start_nexttrace_emits_error_for_stdout_usage_failure(self):
         FakePopen.configure(
             stdout_lines=[
-                "unknown arguments --mtr --map\n",
                 "usage: ntr [TARGET]\n",
             ]
         )

@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 import app as app_module
+import nexttrace_mtr
 
 
 class FakePipe:
@@ -244,8 +245,12 @@ class AppRuntimeTests(unittest.TestCase):
                 "2|*||||||||||\n",
             ]
         )
+        nexttrace_mtr.resolve_mtr_raw_fixed_args.cache_clear()
+        help_output = "usage: nexttrace\n  -t  --mtr\n  -M  --map\n      --raw\n"
 
-        with mock.patch.object(app_module.subprocess, "Popen", FakePopen):
+        with mock.patch.object(app_module.subprocess, "Popen", FakePopen), mock.patch(
+            "nexttrace_mtr.read_help_output", return_value=help_output
+        ):
             self.socket_client.emit(
                 "start_nexttrace",
                 {
@@ -265,6 +270,23 @@ class AppRuntimeTests(unittest.TestCase):
         self.assertIn("--map", FakePopen.instances[0].cmd)
         self.assertNotIn("-q", FakePopen.instances[0].cmd)
         self.assertNotIn("--send-time", FakePopen.instances[0].cmd)
+
+    def test_start_nexttrace_emits_error_for_stdout_usage_failure(self):
+        FakePopen.configure(
+            stdout_lines=[
+                "unknown arguments --mtr --map\n",
+                "usage: ntr [TARGET]\n",
+            ]
+        )
+
+        with mock.patch.object(app_module.subprocess, "Popen", FakePopen):
+            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
+            error_packet = self._get_event("nexttrace_error")
+            complete_packet = self._get_event("nexttrace_complete")
+
+        self.assertEqual(error_packet["args"][0]["code"], "nexttrace_invalid_args")
+        self.assertEqual(error_packet["args"][0]["message"], "usage: ntr [TARGET]")
+        self.assertEqual(complete_packet["name"], "nexttrace_complete")
 
     def test_stop_nexttrace_calls_request_stop(self):
         with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None):

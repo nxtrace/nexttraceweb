@@ -173,6 +173,8 @@ class TraceTask:
         self._pending_options = []
         self._option_timer = None
         self._last_stderr_line = ""
+        self._stdout_hints = []
+        self._saw_output_record = False
 
     def start(self):
         self.thread = threading.Thread(target=self.run, daemon=True, name=f"trace-{self.sid}")
@@ -269,11 +271,13 @@ class TraceTask:
 
                 record = parse_mtr_raw_line(line)
                 if record is not None:
+                    self._saw_output_record = True
                     self.socket_emit("mtr_raw", record)
                     continue
 
                 stripped = line.strip()
                 if stripped:
+                    self._remember_stdout_hint(stripped)
                     logging.debug("Ignored nexttrace stdout sid=%s line=%s", self.sid, stripped)
         finally:
             self._cancel_option_timer()
@@ -287,6 +291,13 @@ class TraceTask:
             if return_code not in (None, 0) and not self._stop_event.is_set():
                 message = self._last_stderr_line or f"nexttrace exited with code {return_code}"
                 self.emit_error("nexttrace_exit_nonzero", message)
+            elif (
+                return_code == 0
+                and not self._stop_event.is_set()
+                and not self._saw_output_record
+                and self._looks_like_cli_usage_failure()
+            ):
+                self.emit_error("nexttrace_invalid_args", self._stdout_hints[-1])
             self.emit_complete()
 
     def socket_emit(self, event: str, payload: Any):
@@ -340,6 +351,21 @@ class TraceTask:
         if self._option_timer is not None:
             self._option_timer.cancel()
             self._option_timer = None
+
+    def _remember_stdout_hint(self, line: str):
+        self._stdout_hints.append(line)
+        if len(self._stdout_hints) > 8:
+            self._stdout_hints = self._stdout_hints[-8:]
+
+    def _looks_like_cli_usage_failure(self) -> bool:
+        if not self._stdout_hints:
+            return False
+        for line in self._stdout_hints:
+            if line.startswith("unknown arguments "):
+                return True
+            if line.startswith("usage: "):
+                return True
+        return False
 
     @staticmethod
     def _close_pipe(pipe):

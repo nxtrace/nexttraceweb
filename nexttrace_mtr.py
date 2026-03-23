@@ -1,7 +1,10 @@
 import re
 import shlex
+import subprocess
+from functools import lru_cache
 
-MTR_RAW_FIXED_ARGS = ('--mtr', '--raw', '--map')
+FULL_MTR_RAW_FIXED_ARGS = ('--mtr', '--raw', '--map')
+NTR_RAW_FIXED_ARGS = ('--raw',)
 MTR_RAW_FIELD_COUNT = 12
 MTR_RAW_IGNORED_PREFIXES = (
     '[NextTrace API]',
@@ -16,13 +19,45 @@ def build_mtr_raw_command(nexttrace_path, params):
         param_list = shlex.split(params)
     else:
         param_list = list(params)
-    return [nexttrace_path] + param_list + list(MTR_RAW_FIXED_ARGS)
+    return [nexttrace_path] + param_list + list(resolve_mtr_raw_fixed_args(nexttrace_path))
 
 
 def build_process_env(source_env):
     env = dict(source_env)
     env.pop('NEXTTRACE_UNINTERRUPTED', None)
     return env
+
+
+@lru_cache(maxsize=None)
+def resolve_mtr_raw_fixed_args(nexttrace_path):
+    help_output = read_help_output(nexttrace_path)
+    if not help_output:
+        return FULL_MTR_RAW_FIXED_ARGS
+
+    supports_mtr = '--mtr' in help_output or '-t  --mtr' in help_output
+    supports_map = '--map' in help_output or '-M  --map' in help_output
+    supports_raw = '--raw' in help_output
+
+    if supports_mtr and supports_map:
+        return FULL_MTR_RAW_FIXED_ARGS
+    if supports_raw:
+        return NTR_RAW_FIXED_ARGS
+    return FULL_MTR_RAW_FIXED_ARGS
+
+
+def read_help_output(nexttrace_path):
+    try:
+        result = subprocess.run(
+            [nexttrace_path, '--help'],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ''
+    return result.stdout or ''
 
 
 def parse_mtr_raw_line(line):

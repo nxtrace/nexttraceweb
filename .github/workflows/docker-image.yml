@@ -92,6 +92,8 @@ jobs:
               ],
               "Dockerfile": [
                   "HEALTHCHECK",
+              ],
+              "requirements.txt": [
                   "gunicorn",
               ],
               "nginx.conf": [

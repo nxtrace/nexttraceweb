@@ -112,6 +112,7 @@ async function startNexttrace() {
         return;
     }
 
+    mtrAggApi.setMTRTargetIp(mtrAggregator, isIpLiteral(ip) ? ip : '');
     traceViewState.acceptUpdates = true;
     socket.emit('start_nexttrace', { ip: ip, extra: extraSettings });
 }
@@ -205,6 +206,10 @@ function hideSelectionModal(triggerCancel) {
 function getValueFromLocalStorage(key) {
     var value = localStorage.getItem(key);
     return value ? value : null;
+}
+
+function isIpLiteral(value) {
+    return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(value) || /^[a-fA-F0-9:]+$/.test(value);
 }
 
 function getFormattedSettings() {

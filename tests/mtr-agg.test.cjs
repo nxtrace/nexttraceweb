@@ -15,6 +15,7 @@ const {
   renderRowHtml,
   renderTableHtml,
   resetMTRAggregator,
+  setMTRTargetIp,
 } = require('../assets/js/mtr-agg.js');
 
 test('aggregates repeated success probes on the same ttl', () => {
@@ -99,6 +100,34 @@ test('trace view state rejects stale start token after cancel', () => {
   assert.equal(isCurrentTraceIntent(state, token), true);
   cancelTraceIntent(state);
   assert.equal(isCurrentTraceIntent(state, token), false);
+});
+
+test('drops hops after first matching destination ip ttl', () => {
+  const aggregator = createMTRAggregator();
+  setMTRTargetIp(aggregator, '1.1.1.1');
+
+  ingestMTRRawRecord(aggregator, { ttl: 3, success: true, ip: '2.2.2.2', rtt_ms: 3 });
+  ingestMTRRawRecord(aggregator, { ttl: 5, success: true, ip: '1.1.1.1', rtt_ms: 5 });
+  ingestMTRRawRecord(aggregator, { ttl: 8, success: true, ip: '1.1.1.1', rtt_ms: 8 });
+  ingestMTRRawRecord(aggregator, { ttl: 10, success: true, ip: '1.1.1.1', rtt_ms: 10 });
+
+  const rows = buildRenderableRows(aggregator);
+  assert.deepEqual(rows.map((row) => row.ttl), [3, 5]);
+  assert.equal(rows[1].sent, 1);
+});
+
+test('keeps updating terminal ttl row after destination is found', () => {
+  const aggregator = createMTRAggregator();
+  setMTRTargetIp(aggregator, '1.1.1.1');
+
+  ingestMTRRawRecord(aggregator, { ttl: 5, success: true, ip: '1.1.1.1', rtt_ms: 5 });
+  ingestMTRRawRecord(aggregator, { ttl: 5, success: true, ip: '1.1.1.1', rtt_ms: 6 });
+  ingestMTRRawRecord(aggregator, { ttl: 6, success: true, ip: '9.9.9.9', rtt_ms: 7 });
+
+  const [row] = buildRenderableRows(aggregator);
+  assert.equal(row.ttl, 5);
+  assert.equal(row.sent, 2);
+  assert.equal(row.avgMs, 5.5);
 });
 
 test('renderTableHtml preserves owner header', () => {

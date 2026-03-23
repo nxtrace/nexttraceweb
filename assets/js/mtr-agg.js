@@ -27,7 +27,9 @@
 
     function createMTRAggregator() {
         return {
-            rows: new Map()
+            rows: new Map(),
+            targetIp: '',
+            terminalTtl: null
         };
     }
 
@@ -35,6 +37,18 @@
         if (aggregator && aggregator.rows) {
             aggregator.rows.clear();
         }
+        if (aggregator) {
+            aggregator.targetIp = '';
+            aggregator.terminalTtl = null;
+        }
+    }
+
+    function setMTRTargetIp(aggregator, targetIp) {
+        if (!aggregator) {
+            return;
+        }
+        aggregator.targetIp = normalizeIp(targetIp);
+        aggregator.terminalTtl = null;
     }
 
     function createTraceViewState() {
@@ -67,6 +81,17 @@
         var ttl = Number(rec && rec.ttl);
         if (!Number.isFinite(ttl)) {
             return null;
+        }
+        if (aggregator.terminalTtl !== null && ttl > aggregator.terminalTtl) {
+            return null;
+        }
+
+        var recordIp = normalizeIp(rec && rec.ip);
+        if (aggregator.targetIp !== '' && recordIp === aggregator.targetIp) {
+            if (aggregator.terminalTtl === null || ttl < aggregator.terminalTtl) {
+                aggregator.terminalTtl = ttl;
+                pruneRowsBeyondTerminalTtl(aggregator);
+            }
         }
 
         var row = aggregator.rows.get(ttl);
@@ -139,6 +164,17 @@
                     stdevMs: stdevMs
                 };
             });
+    }
+
+    function pruneRowsBeyondTerminalTtl(aggregator) {
+        if (!aggregator || aggregator.terminalTtl === null) {
+            return;
+        }
+        aggregator.rows.forEach(function (_, ttl) {
+            if (ttl > aggregator.terminalTtl) {
+                aggregator.rows.delete(ttl);
+            }
+        });
     }
 
     function renderTableHtml(rows) {
@@ -278,6 +314,10 @@
         return String(value).trim();
     }
 
+    function normalizeIp(value) {
+        return normalizeString(value).toLowerCase();
+    }
+
     function toFiniteNumber(value) {
         var number = Number(value);
         return Number.isFinite(number) ? number : 0;
@@ -354,5 +394,7 @@
         renderRowHtml: renderRowHtml,
         renderTableHtml: renderTableHtml,
         resetMTRAggregator: resetMTRAggregator
+        ,
+        setMTRTargetIp: setMTRTargetIp
     };
 });

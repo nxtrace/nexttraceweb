@@ -50,7 +50,7 @@
                 <button type="button" id="startBtn" class="btn btn-primary">Start</button>
                 <button type="button" id="stopBtn" class="btn btn-secondary">Stop</button>
                 <button type="button" id="resetBtn" class="btn btn-ghost">Reset</button>
-                <button type="button" id="settingBtn" class="btn btn-ghost">Settings</button>
+                <button type="button" id="settingBtn" class="btn btn-ghost" aria-controls="settingMenu" aria-expanded="false">Settings</button>
             </div>
 
             <div class="status-strip">
@@ -83,93 +83,6 @@
                 </div>
             </div>
         </form>
-
-        <div id="settingsBackdrop" class="settings-backdrop"></div>
-        <aside id="settingMenu" class="settings-drawer" aria-hidden="true">
-            <div class="drawer-header">
-                <div>
-                    <p class="eyebrow">runtime settings</p>
-                    <h2>Trace Settings</h2>
-                </div>
-                <button type="button" id="settingCloseBtn" class="drawer-close" aria-label="Close settings">&times;</button>
-            </div>
-
-            <div class="settings-grid">
-                <label class="field" for="language">
-                    <span class="field-label">Language</span>
-                    <select id="language" name="language" class="select-input">
-                        <option value="cn">Chinese</option>
-                        <option value="en">English</option>
-                    </select>
-                </label>
-
-                <label class="field field-toggle" for="localResolveCheckbox">
-                    <span class="field-label">Resolve Mode</span>
-                    <span class="toggle-card">
-                        <input type="checkbox" id="localResolveCheckbox" checked>
-                        <span>Prefer local DoH resolve before starting the trace</span>
-                    </span>
-                </label>
-
-                <label class="field field-span-2" for="intervalTimeSlider">
-                    <span class="field-label">Probe Interval Seconds</span>
-                    <div id="intervalTimeSlider" class="range-pair">
-                        <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="0.040">
-                        <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="0.040">
-                    </div>
-                </label>
-
-                <label class="field field-span-2" for="packetSizeSlider">
-                    <span class="field-label">Packet Size</span>
-                    <div id="packetSizeSlider" class="range-pair">
-                        <input type="range" id="packetSizeRange" min="0" max="1500" step="1" value="52">
-                        <input type="number" id="packetSizeInput" min="0" max="1500" step="1" value="52">
-                    </div>
-                </label>
-
-                <label class="field" for="maxHopInput">
-                    <span class="field-label">Max Hop</span>
-                    <input type="number" id="maxHopInput" class="text-input" min="1" max="30" step="1" value="30">
-                </label>
-
-                <label class="field" for="minHopInput">
-                    <span class="field-label">Min Hop</span>
-                    <input type="number" id="minHopInput" class="text-input" min="1" max="30" step="1" value="1">
-                </label>
-
-                <label class="field" for="portInput">
-                    <span class="field-label">Port</span>
-                    <input type="number" id="portInput" class="text-input" min="1" max="65535" step="1" value="80">
-                </label>
-
-                <label class="field" for="devInput">
-                    <span class="field-label">Device</span>
-                    <input type="text" id="devInput" class="text-input" placeholder="Device">
-                    <span id="dev-error-message" class="validation-message">Invalid device name.</span>
-                </label>
-
-                <label class="field field-span-2" for="dataProvider">
-                    <span class="field-label">Geo Data Provider</span>
-                    <input type="text" list="dataProviders" id="dataProvider" class="text-input" placeholder="dataProvider">
-                    <datalist id="dataProviders">
-                        <option value="LeoMoeAPI">
-                        <option value="Ip2region">
-                        <option value="IP.SB">
-                        <option value="IPInfo">
-                        <option value="IPInsight">
-                        <option value="ip-api.com">
-                        <option value="IPInfoLocal">
-                        <option value="Chunzhen">
-                        <option value="Disable-geoip">
-                    </datalist>
-                    <span id="dp-error-message" class="validation-message">Invalid data provider.</span>
-                </label>
-            </div>
-
-            <div class="drawer-actions">
-                <button type="button" id="saveBtn" class="btn btn-primary">Save Settings</button>
-            </div>
-        </aside>
     </section>
 
     <main class="content-grid">
@@ -258,6 +171,101 @@
         </aside>
     </main>
 </div>
+
+<div id="settingsBackdrop" class="settings-backdrop" aria-hidden="true"></div>
+<aside
+    id="settingMenu"
+    class="settings-drawer"
+    aria-hidden="true"
+    aria-modal="true"
+    aria-labelledby="settingsDrawerTitle"
+    role="dialog"
+    tabindex="-1"
+>
+    <div class="drawer-header">
+        <div>
+            <p class="eyebrow">runtime settings</p>
+            <h2 id="settingsDrawerTitle">Trace Settings</h2>
+        </div>
+        <button type="button" id="settingCloseBtn" class="drawer-close" aria-label="Close settings">&times;</button>
+    </div>
+
+    <div class="settings-grid">
+        <label class="field" for="language">
+            <span class="field-label">Language</span>
+            <select id="language" name="language" class="select-input">
+                <option value="cn">Chinese</option>
+                <option value="en">English</option>
+            </select>
+        </label>
+
+        <label class="field field-toggle" for="localResolveCheckbox">
+            <span class="field-label">Resolve Mode</span>
+            <span class="toggle-card">
+                <input type="checkbox" id="localResolveCheckbox" checked>
+                <span>Prefer local DoH resolve before starting the trace</span>
+            </span>
+        </label>
+
+        <label class="field field-span-2" for="intervalTimeSlider">
+            <span class="field-label">Probe Interval Seconds</span>
+            <div id="intervalTimeSlider" class="range-pair">
+                <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="0.040">
+                <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="0.040">
+            </div>
+        </label>
+
+        <label class="field field-span-2" for="packetSizeSlider">
+            <span class="field-label">Packet Size</span>
+            <div id="packetSizeSlider" class="range-pair">
+                <input type="range" id="packetSizeRange" min="0" max="1500" step="1" value="52">
+                <input type="number" id="packetSizeInput" min="0" max="1500" step="1" value="52">
+            </div>
+        </label>
+
+        <label class="field" for="maxHopInput">
+            <span class="field-label">Max Hop</span>
+            <input type="number" id="maxHopInput" class="text-input" min="1" max="30" step="1" value="30">
+        </label>
+
+        <label class="field" for="minHopInput">
+            <span class="field-label">Min Hop</span>
+            <input type="number" id="minHopInput" class="text-input" min="1" max="30" step="1" value="1">
+        </label>
+
+        <label class="field" for="portInput">
+            <span class="field-label">Port</span>
+            <input type="number" id="portInput" class="text-input" min="1" max="65535" step="1" value="80">
+        </label>
+
+        <label class="field" for="devInput">
+            <span class="field-label">Device</span>
+            <input type="text" id="devInput" class="text-input" placeholder="Device">
+            <span id="dev-error-message" class="validation-message">Invalid device name.</span>
+        </label>
+
+        <label class="field field-span-2" for="dataProvider">
+            <span class="field-label">Geo Data Provider</span>
+            <input type="text" list="dataProviders" id="dataProvider" class="text-input" placeholder="dataProvider">
+            <datalist id="dataProviders">
+                <option value="LeoMoeAPI">
+                <option value="Ip2region">
+                <option value="IP.SB">
+                <option value="IPInfo">
+                <option value="IPInsight">
+                <option value="ip-api.com">
+                <option value="IPInfoLocal">
+                <option value="Chunzhen">
+                <option value="Disable-geoip">
+            </datalist>
+            <span id="dp-error-message" class="validation-message">Invalid data provider.</span>
+        </label>
+    </div>
+
+    <div class="drawer-actions">
+        <button type="button" id="saveBtn" class="btn btn-primary">Save Settings</button>
+    </div>
+</aside>
 
 <div id="ipSelector" class="modal-shell">
     <div class="modal-card">

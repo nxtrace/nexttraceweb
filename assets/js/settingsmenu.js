@@ -7,6 +7,8 @@ var intervalTimeRange = document.getElementById('intervalTimeRange');
 var intervalTimeInput = document.getElementById('intervalTimeInput');
 var packetSizeRange = document.getElementById('packetSizeRange');
 var packetSizeInput = document.getElementById('packetSizeInput');
+var settingsFirstFocusable = document.getElementById('language');
+var lastSettingsTrigger = null;
 
 settingBtn.addEventListener('click', function (event) {
     event.preventDefault();
@@ -97,15 +99,27 @@ function toggleSettingsMenu() {
 }
 
 function openSettingsMenu() {
+    lastSettingsTrigger = document.activeElement || settingBtn;
     settingMenu.classList.add('is-open');
     settingMenu.setAttribute('aria-hidden', 'false');
+    settingsBackdrop.setAttribute('aria-hidden', 'false');
+    settingBtn.setAttribute('aria-expanded', 'true');
     document.body.classList.add('settings-open');
+    if (settingsFirstFocusable && typeof settingsFirstFocusable.focus === 'function') {
+        settingsFirstFocusable.focus();
+    }
 }
 
 function closeSettingsMenu() {
     settingMenu.classList.remove('is-open');
     settingMenu.setAttribute('aria-hidden', 'true');
+    settingsBackdrop.setAttribute('aria-hidden', 'true');
+    settingBtn.setAttribute('aria-expanded', 'false');
     document.body.classList.remove('settings-open');
+    if (lastSettingsTrigger && typeof lastSettingsTrigger.focus === 'function') {
+        lastSettingsTrigger.focus();
+    }
+    lastSettingsTrigger = null;
 }
 
 function loadStoredSettings() {

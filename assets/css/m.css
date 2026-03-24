@@ -547,11 +547,13 @@ body.settings-open .settings-backdrop {
 }
 
 .settings-drawer {
-    position: absolute;
+    position: fixed;
+    top: 20px;
     right: 20px;
-    top: calc(100% - 2px);
     z-index: 20;
-    width: min(420px, calc(100% - 40px));
+    width: min(420px, calc(100vw - 32px));
+    max-height: calc(100vh - 40px);
+    overflow: auto;
     padding: 18px;
     display: none;
 }
@@ -617,6 +619,10 @@ body.settings-open .settings-backdrop {
     display: none;
     color: var(--error);
     font-size: 12px;
+}
+
+body.settings-open {
+    overflow: hidden;
 }
 
 .drawer-actions {
@@ -740,10 +746,6 @@ body.settings-open .settings-backdrop {
         right: auto;
         top: auto;
         padding-bottom: 24px;
-    }
-
-    body.settings-open {
-        overflow: hidden;
     }
 
     .table-panel-header {

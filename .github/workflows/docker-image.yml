@@ -77,9 +77,13 @@ jobs:
           node --check assets/js/mtr-agg.js
           node --check assets/js/settingsmenu.js
           node --check assets/js/ui-state.js
+          node --check tests/browser-harness.cjs
+          node --check tests/browser-controls.check.cjs
 
       - name: Run frontend tests
-        run: node --test tests/*.test.cjs
+        run: |
+          node --test tests/*.test.cjs
+          node tests/browser-controls.check.cjs
 
   security-check:
     runs-on: ubuntu-latest

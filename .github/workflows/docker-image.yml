@@ -76,6 +76,7 @@ jobs:
           node --check assets/js/main.js
           node --check assets/js/mtr-agg.js
           node --check assets/js/settingsmenu.js
+          node --check assets/js/ui-state.js
 
       - name: Run frontend tests
         run: node --test tests/*.test.cjs

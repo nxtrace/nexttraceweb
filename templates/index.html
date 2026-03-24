@@ -3,114 +3,273 @@
 <head>
     <title>NextTrace Web</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/assets/css/m.css" type="text/css">
     <script src="/assets/js/socket.io.js" defer></script>
     <script src="/assets/js/mtr-agg.js" defer></script>
+    <script src="/assets/js/ui-state.js" defer></script>
     <script src="/assets/js/main.js" defer></script>
     <script src="/assets/js/settingsmenu.js" defer></script>
 </head>
 <body>
-<h1>NextTrace Web</h1>
-<form>
-    <label for="params">
-        <input type="text" id="params" placeholder="IP/Domain/URL">
-    </label>
-    <label for="ipVersion"></label>
-    <select id="ipVersion" name="protocol">
-        <option value="all">ALL</option>
-        <option value="ipv4">IPv4</option>
-        <option value="ipv6">IPv6</option>
-    </select>
-    <label for="protocol"></label>
-    <select id="protocol" name="protocol">
-        <option value="icmp">ICMP</option>
-        <option value="tcp">TCP</option>
-        <option value="udp">UDP</option>
-    </select>
-    <button type="button" id="startBtn">Start Nexttrace</button>
-    <button type="button" id="stopBtn">Stop Nexttrace</button>
-    <button type="button" id="resetBtn">Reset</button>
-    <button id="settingBtn">Settings</button>
-    <div id="settingMenu" class="floating-menu">
-        <label for="language">Language:</label>
-        <select id="language" name="language">
-            <option value="cn">Chinese</option>
-            <option value="en">English</option>
-        </select>
-        <br>
-        <label for="intervalTimeSlider">Probe Interval Seconds:</label>
-        <div id="intervalTimeSlider" class="block-container">
-            <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="0.040">
-            <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="0.040">
+<div class="page-shell">
+    <header class="app-header">
+        <div class="brand-copy">
+            <p class="eyebrow">ping.pe inspired traceroute surface</p>
+            <h1>NextTrace Web</h1>
+            <p class="tagline">Stream hop-by-hop route data with a denser layout, clearer state feedback, and faster repeat workflows.</p>
         </div>
-        <br>
-        <label for="packetSizeSlider">Packet Size:</label>
-        <div id="packetSizeSlider" class="block-container">
-            <input type="range" id="packetSizeRange" min="0" max="1500" step="1" value="52">
-            <input type="number" id="packetSizeInput" min="0" max="1500" step="1" value="52">
+    </header>
+
+    <section class="control-panel">
+        <form id="traceForm" class="trace-form" novalidate>
+            <div class="control-row">
+                <label class="field field-target" for="params">
+                    <span class="field-label">Target</span>
+                    <input type="text" id="params" class="text-input" placeholder="IP / domain / URL" autocomplete="off">
+                </label>
+
+                <label class="field field-compact" for="ipVersion">
+                    <span class="field-label">IP Version</span>
+                    <select id="ipVersion" name="ipVersion" class="select-input">
+                        <option value="all">ALL</option>
+                        <option value="ipv4">IPv4</option>
+                        <option value="ipv6">IPv6</option>
+                    </select>
+                </label>
+
+                <label class="field field-compact" for="protocol">
+                    <span class="field-label">Protocol</span>
+                    <select id="protocol" name="protocol" class="select-input">
+                        <option value="icmp">ICMP</option>
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                    </select>
+                </label>
+
+                <button type="button" id="startBtn" class="btn btn-primary">Start</button>
+                <button type="button" id="stopBtn" class="btn btn-secondary">Stop</button>
+                <button type="button" id="resetBtn" class="btn btn-ghost">Reset</button>
+                <button type="button" id="settingBtn" class="btn btn-ghost">Settings</button>
+            </div>
+
+            <div class="status-strip">
+                <div class="status-primary">
+                    <span id="taskStatusBadge" class="status-badge" data-tone="neutral">Idle</span>
+                    <p id="taskStatusDetail" class="status-detail">Ready for a new trace.</p>
+                </div>
+
+                <div class="status-facts">
+                    <div class="status-fact">
+                        <span class="fact-label">Target</span>
+                        <span id="targetSummary" class="fact-value">Not set</span>
+                    </div>
+                    <div class="status-fact">
+                        <span class="fact-label">Connection</span>
+                        <span id="connectionSummary" class="fact-value">Connecting</span>
+                    </div>
+                    <div class="status-fact">
+                        <span class="fact-label">Resolve</span>
+                        <span id="resolveModeSummary" class="fact-value">Local Resolve</span>
+                    </div>
+                    <div class="status-fact">
+                        <span class="fact-label">Settings</span>
+                        <span id="settingsSummaryInline" class="fact-value">CN · Local Resolve</span>
+                    </div>
+                </div>
+
+                <div class="status-tools">
+                    <button type="button" id="shareBtn" class="btn btn-inline">Copy Share Link</button>
+                </div>
+            </div>
+        </form>
+
+        <div id="settingsBackdrop" class="settings-backdrop"></div>
+        <aside id="settingMenu" class="settings-drawer" aria-hidden="true">
+            <div class="drawer-header">
+                <div>
+                    <p class="eyebrow">runtime settings</p>
+                    <h2>Trace Settings</h2>
+                </div>
+                <button type="button" id="settingCloseBtn" class="drawer-close" aria-label="Close settings">&times;</button>
+            </div>
+
+            <div class="settings-grid">
+                <label class="field" for="language">
+                    <span class="field-label">Language</span>
+                    <select id="language" name="language" class="select-input">
+                        <option value="cn">Chinese</option>
+                        <option value="en">English</option>
+                    </select>
+                </label>
+
+                <label class="field field-toggle" for="localResolveCheckbox">
+                    <span class="field-label">Resolve Mode</span>
+                    <span class="toggle-card">
+                        <input type="checkbox" id="localResolveCheckbox" checked>
+                        <span>Prefer local DoH resolve before starting the trace</span>
+                    </span>
+                </label>
+
+                <label class="field field-span-2" for="intervalTimeSlider">
+                    <span class="field-label">Probe Interval Seconds</span>
+                    <div id="intervalTimeSlider" class="range-pair">
+                        <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="0.040">
+                        <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="0.040">
+                    </div>
+                </label>
+
+                <label class="field field-span-2" for="packetSizeSlider">
+                    <span class="field-label">Packet Size</span>
+                    <div id="packetSizeSlider" class="range-pair">
+                        <input type="range" id="packetSizeRange" min="0" max="1500" step="1" value="52">
+                        <input type="number" id="packetSizeInput" min="0" max="1500" step="1" value="52">
+                    </div>
+                </label>
+
+                <label class="field" for="maxHopInput">
+                    <span class="field-label">Max Hop</span>
+                    <input type="number" id="maxHopInput" class="text-input" min="1" max="30" step="1" value="30">
+                </label>
+
+                <label class="field" for="minHopInput">
+                    <span class="field-label">Min Hop</span>
+                    <input type="number" id="minHopInput" class="text-input" min="1" max="30" step="1" value="1">
+                </label>
+
+                <label class="field" for="portInput">
+                    <span class="field-label">Port</span>
+                    <input type="number" id="portInput" class="text-input" min="1" max="65535" step="1" value="80">
+                </label>
+
+                <label class="field" for="devInput">
+                    <span class="field-label">Device</span>
+                    <input type="text" id="devInput" class="text-input" placeholder="Device">
+                    <span id="dev-error-message" class="validation-message">Invalid device name.</span>
+                </label>
+
+                <label class="field field-span-2" for="dataProvider">
+                    <span class="field-label">Geo Data Provider</span>
+                    <input type="text" list="dataProviders" id="dataProvider" class="text-input" placeholder="dataProvider">
+                    <datalist id="dataProviders">
+                        <option value="LeoMoeAPI">
+                        <option value="Ip2region">
+                        <option value="IP.SB">
+                        <option value="IPInfo">
+                        <option value="IPInsight">
+                        <option value="ip-api.com">
+                        <option value="IPInfoLocal">
+                        <option value="Chunzhen">
+                        <option value="Disable-geoip">
+                    </datalist>
+                    <span id="dp-error-message" class="validation-message">Invalid data provider.</span>
+                </label>
+            </div>
+
+            <div class="drawer-actions">
+                <button type="button" id="saveBtn" class="btn btn-primary">Save Settings</button>
+            </div>
+        </aside>
+    </section>
+
+    <main class="content-grid">
+        <section class="results-panel">
+            <div id="noticeBanner" class="notice-banner" data-tone="info" hidden></div>
+
+            <div id="resultEmptyState" class="result-state" data-tone="neutral">
+                <p class="eyebrow">trace state</p>
+                <h2 id="resultStateTitle">Ready for a new trace</h2>
+                <p id="resultStateText">Enter an IP, domain, or URL to start streaming hop data.</p>
+            </div>
+
+            <div class="table-panel">
+                <div class="table-panel-header">
+                    <div>
+                        <p class="eyebrow">streaming hop view</p>
+                        <h2>Trace Output</h2>
+                    </div>
+                    <p class="table-hint">Sticky header, horizontal scroll on narrow screens, raw TTL aggregation unchanged.</p>
+                </div>
+
+                <div class="table-shell">
+                    <table id="output" class="pingtable">
+                        <tbody>
+                        <tr>
+                            <th>HOP</th>
+                            <th>IP</th>
+                            <th>ASN</th>
+                            <th>LOCATION</th>
+                            <th>OWNER</th>
+                            <th>LOSS%</th>
+                            <th>SENT</th>
+                            <th>LAST</th>
+                            <th>AVG</th>
+                            <th>BEST</th>
+                            <th>WORST</th>
+                            <th>STDEV</th>
+                            <th>PTR</th>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <aside class="helper-panel">
+            <section class="helper-card">
+                <div class="helper-card-header">
+                    <div>
+                        <p class="eyebrow">history</p>
+                        <h2>Recent Queries</h2>
+                    </div>
+                    <span class="helper-card-meta">stored locally</span>
+                </div>
+                <div id="recentQueries" class="chip-list chip-list-empty">
+                    <span class="helper-empty">Your recent traces will appear here.</span>
+                </div>
+            </section>
+
+            <section class="helper-card">
+                <div class="helper-card-header">
+                    <div>
+                        <p class="eyebrow">quick start</p>
+                        <h2>Example Targets</h2>
+                    </div>
+                </div>
+                <div class="chip-list">
+                    <button type="button" class="chip-button" data-example-query="1.1.1.1">1.1.1.1</button>
+                    <button type="button" class="chip-button" data-example-query="8.8.8.8">8.8.8.8</button>
+                    <button type="button" class="chip-button" data-example-query="example.com">example.com</button>
+                    <button type="button" class="chip-button" data-example-query="openai.com">openai.com</button>
+                    <button type="button" class="chip-button" data-example-query="2606:4700:4700::1111">2606:4700:4700::1111</button>
+                    <button type="button" class="chip-button" data-example-query="github.com">github.com</button>
+                </div>
+            </section>
+
+            <section class="helper-card">
+                <div class="helper-card-header">
+                    <div>
+                        <p class="eyebrow">effective configuration</p>
+                        <h2>Current Settings</h2>
+                    </div>
+                </div>
+                <div id="settingsSummaryPanel" class="chip-list"></div>
+            </section>
+        </aside>
+    </main>
+</div>
+
+<div id="ipSelector" class="modal-shell">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div>
+                <p class="eyebrow">resolver result</p>
+                <h2 id="ipSelectorTitle">请选择一个IP地址</h2>
+            </div>
+            <button type="button" class="drawer-close" id="ipSelectorClose" aria-label="Close selector">&times;</button>
         </div>
-        <br>
-        <label for="maxHopInput">Max Hop:</label>
-        <input type="number" id="maxHopInput" min="1" max="30" step="1" value="30">
-        <br>
-        <label for="minHopInput">Min Hop:</label>
-        <input type="number" id="minHopInput" min="1" max="30" step="1" value="1">
-        <br>
-        <label for="portInput">Port:</label>
-        <input type="number" id="portInput" min="1" max="65535" step="1" value="80">
-        <br>
-        <label for="devInput">Device:</label>
-        <input type="text" id="devInput" placeholder="Device">
-        <span id="dev-error-message" style="color:red; display:none;">Invalid Input</span>
-        <br>
-        <label for="dataProvider">Data Provider:</label>
-        <input type="text" list="dataProviders" id="dataProvider" placeholder="dataProvider">
-        <datalist id="dataProviders">
-            <option value="LeoMoeAPI">
-            <option value="Ip2region">
-            <option value="IP.SB">
-            <option value="IPInfo">
-            <option value="IPInsight">
-            <option value="ip-api.com">
-            <option value="IPInfoLocal">
-            <option value="Chunzhen">
-            <option value="Disable-geoip">
-        </datalist>
-        <span id="dp-error-message" style="color:red; display:none;">Invalid Input</span>
-        <br>
-        <label for="localResolveCheckbox" class="block-container">
-            <input type="checkbox" id="localResolveCheckbox" checked>
-            LOCAL RESOLVE
-        </label>
-        <br>
-        <button id="saveBtn">Save</button>
+        <div id="ip-list" class="modal-list"></div>
     </div>
-    <div id="ipSelector" class="modal-content">
-        <span class="close" id="ipSelectorClose">&times;</span>
-        <p id="ipSelectorTitle">请选择一个IP地址:</p>
-        <div id="ip-list"></div>
-    </div>
-</form>
-<table id="output" class="pingtable">
-    <tbody>
-    <tr>
-        <th>HOP</th>
-        <th>IP</th>
-        <th>ASN</th>
-        <th>LOCATION</th>
-        <th>OWNER</th>
-        <th>LOSS%</th>
-        <th>SENT</th>
-        <th>LAST</th>
-        <th>AVG</th>
-        <th>BEST</th>
-        <th>WORST</th>
-        <th>STDEV</th>
-        <th>PTR</th>
-        <!-- 暂时搁置       <th>CHART</th>-->
-    </tr>
-    <!-- Data rows will be dynamically inserted here -->
-    </tbody>
-</table>
+</div>
 </body>
 </html>

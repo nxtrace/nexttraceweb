@@ -189,6 +189,11 @@ class AppRuntimeTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, "invalid_payload")
 
+    def test_build_trace_params_accepts_detected_device_name(self):
+        params = app_module.build_trace_params("example.com", {"device": "br-test0"})
+
+        self.assertEqual(params, ["example.com", "--dev", "br-test0"])
+
     def test_healthz_reports_ok_when_binary_exists(self):
         app_module.app.config["NTWA_NEXTTRACE_PATH"] = sys.executable
 
@@ -204,6 +209,13 @@ class AppRuntimeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_json()["status"], "degraded")
+
+    @mock.patch.object(app_module.socket_module, "if_nameindex", return_value=[(1, "lo0"), (2, "br-test0"), (3, "bad name")])
+    def test_api_devices_returns_filtered_detected_interfaces(self, _if_nameindex):
+        response = self.flask_client.get("/api/devices")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"devices": ["lo0", "br-test0"], "count": 2})
 
     def test_start_nexttrace_invalid_json_emits_structured_error(self):
         self.socket_client.emit("start_nexttrace", "{bad json")

@@ -7,6 +7,7 @@ var intervalTimeRange = document.getElementById('intervalTimeRange');
 var intervalTimeInput = document.getElementById('intervalTimeInput');
 var packetSizeRange = document.getElementById('packetSizeRange');
 var packetSizeInput = document.getElementById('packetSizeInput');
+var deviceOptions = document.getElementById('deviceOptions');
 var settingsFirstFocusable = document.getElementById('language');
 var lastSettingsTrigger = null;
 
@@ -48,6 +49,8 @@ packetSizeRange.addEventListener('input', function () {
 packetSizeInput.addEventListener('input', function () {
     packetSizeRange.value = packetSizeInput.value;
 });
+
+loadAvailableDevices();
 
 saveBtn.addEventListener('click', function (event) {
     event.preventDefault();
@@ -163,6 +166,44 @@ function loadStoredSettings() {
     if (localStorage.getItem('localResolve')) {
         document.getElementById('localResolveCheckbox').checked = localStorage.getItem('localResolve') === 'true';
     }
+}
+
+function loadAvailableDevices() {
+    if (!deviceOptions || typeof fetch !== 'function') {
+        return Promise.resolve();
+    }
+
+    return fetch('/api/devices', {
+        headers: { accept: 'application/json' }
+    })
+        .then(function (response) {
+            if (!response.ok) {
+                throw new Error('device list request failed');
+            }
+            return response.json();
+        })
+        .then(function (payload) {
+            renderDeviceOptions(payload && payload.devices);
+        })
+        .catch(function () {
+            renderDeviceOptions([]);
+        });
+}
+
+function renderDeviceOptions(devices) {
+    deviceOptions.innerHTML = '';
+    if (!Array.isArray(devices)) {
+        return;
+    }
+
+    devices.forEach(function (deviceName) {
+        if (typeof deviceName !== 'string' || deviceName.trim() === '') {
+            return;
+        }
+        var option = document.createElement('option');
+        option.value = deviceName;
+        deviceOptions.appendChild(option);
+    });
 }
 
 function notifySettingsChanged() {

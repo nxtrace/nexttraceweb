@@ -698,7 +698,7 @@ function formatConnectionStatus(status) {
 }
 
 function deviceValidateInput() {
-    var allowedPattern = '^[a-zA-Z]*\\d*$';
+    var allowedPattern = '^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,126}$';
     var inputElement = $('devInput');
     var errorMessageElement = $('dev-error-message');
 

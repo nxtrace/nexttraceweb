@@ -1,4 +1,5 @@
 import os
+import socket as socket_module
 import sys
 
 try:
@@ -45,7 +46,7 @@ from nexttrace_mtr import INVALID_PARAM_PATTERN, build_mtr_raw_command, build_pr
 
 
 TRACE_OPTION_PATTERN = r"^\d+\.\s+(.+)$"
-DEVICE_PATTERN = r"^[A-Za-z]*\d*$"
+DEVICE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,126}$"
 HOSTNAME_PATTERN = r"^(?=.{1,255}$)(?!-)[A-Za-z0-9-]{1,63}(?:\.(?!-)[A-Za-z0-9-]{1,63})*$"
 DATA_PROVIDER_ALLOWLIST = {
     "Ip2region",
@@ -596,6 +597,26 @@ def stop_nexttrace_for_sid(sid: str):
         task.request_stop()
 
 
+def list_available_devices() -> list[str]:
+    try:
+        discovered = socket_module.if_nameindex()
+    except OSError:
+        logging.warning("Failed to enumerate local interfaces", exc_info=True)
+        return []
+
+    devices = []
+    seen = set()
+    for _index, raw_name in discovered:
+        name = str(raw_name).strip()
+        if not name or not re.match(DEVICE_PATTERN, name):
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        devices.append(name)
+    return devices
+
+
 @app.before_request
 def validate_request_host():
     if not is_trusted_host(request.host):
@@ -626,6 +647,12 @@ def healthz():
         ),
         status_code,
     )
+
+
+@app.route("/api/devices")
+def api_devices():
+    devices = list_available_devices()
+    return jsonify({"devices": devices, "count": len(devices)})
 
 
 @socketio.on("connect")

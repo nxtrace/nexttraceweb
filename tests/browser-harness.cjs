@@ -352,6 +352,21 @@ function flushPromises() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function createDefaultFetch(devices) {
+  const deviceList = Array.isArray(devices) ? devices : ['en0', 'utun0'];
+  return function fetch(url) {
+    if (url === '/api/devices') {
+      return Promise.resolve({
+        ok: true,
+        json() {
+          return Promise.resolve({ devices: deviceList, count: deviceList.length });
+        }
+      });
+    }
+    return Promise.reject(new Error(`fetch not mocked for ${url}`));
+  };
+}
+
 function createBrowserHarness(options = {}) {
   const document = new FakeDocument(options.url || 'https://example.test/');
   const localStorage = new FakeStorage(options.storage || {});
@@ -431,7 +446,12 @@ function createBrowserHarness(options = {}) {
   appendElement(document, settingMenu, 'input', 'maxHopInput', { type: 'number', value: '30' });
   appendElement(document, settingMenu, 'input', 'minHopInput', { type: 'number', value: '1' });
   appendElement(document, settingMenu, 'input', 'portInput', { type: 'number', value: '80' });
-  appendElement(document, settingMenu, 'input', 'devInput', { type: 'text', value: '' });
+  appendElement(document, settingMenu, 'input', 'devInput', {
+    type: 'text',
+    value: '',
+    attributes: { list: 'deviceOptions' }
+  });
+  appendElement(document, settingMenu, 'datalist', 'deviceOptions');
   appendElement(document, settingMenu, 'span', 'dev-error-message');
   appendElement(document, settingMenu, 'input', 'dataProvider', { type: 'text', value: '' });
   appendElement(document, settingMenu, 'span', 'dp-error-message');
@@ -455,7 +475,7 @@ function createBrowserHarness(options = {}) {
     URLSearchParams,
     CustomEvent: FakeCustomEvent,
     Event: FakeEvent,
-    fetch: options.fetch || (() => Promise.reject(new Error('fetch not mocked'))),
+    fetch: options.fetch || createDefaultFetch(options.devices),
     io: {
       connect() {
         return socket;
@@ -511,6 +531,7 @@ function createBrowserHarness(options = {}) {
       minHopInput: document.getElementById('minHopInput'),
       portInput: document.getElementById('portInput'),
       devInput: document.getElementById('devInput'),
+      deviceOptions: document.getElementById('deviceOptions'),
       devError: document.getElementById('dev-error-message'),
       dataProvider: document.getElementById('dataProvider'),
       dpError: document.getElementById('dp-error-message'),

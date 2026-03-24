@@ -97,8 +97,12 @@ async function checkSettingsInputSync() {
 }
 
 async function checkSettingsPersistenceAndSummary() {
-  const harness = createBrowserHarness({ console: quietConsole });
+  const harness = createBrowserHarness({
+    console: quietConsole,
+    devices: ['en0', 'br-test0']
+  });
   const { localStorage, elements } = harness;
+  await harness.flushPromises();
 
   elements.ipVersion.value = 'ipv6';
   harness.dispatchChange(elements.ipVersion);
@@ -115,7 +119,10 @@ async function checkSettingsPersistenceAndSummary() {
   elements.maxHopInput.value = '12';
   elements.minHopInput.value = '2';
   elements.portInput.value = '443';
-  elements.devInput.value = 'en0';
+  assert.equal(elements.devInput.getAttribute('list'), 'deviceOptions');
+  assert.equal(elements.deviceOptions.children.length, 2);
+  assert.equal(elements.deviceOptions.children[1].value, 'br-test0');
+  elements.devInput.value = 'br-test0';
   elements.dataProvider.value = 'IP.SB';
 
   elements.saveBtn.click();
@@ -128,7 +135,7 @@ async function checkSettingsPersistenceAndSummary() {
   assert.equal(localStorage.getItem('maxHop'), '12');
   assert.equal(localStorage.getItem('minHop'), '2');
   assert.equal(localStorage.getItem('port'), '443');
-  assert.equal(localStorage.getItem('device'), 'en0');
+  assert.equal(localStorage.getItem('device'), 'br-test0');
   assert.equal(localStorage.getItem('dataProvider'), 'IP.SB');
   assert.equal(elements.settingMenu.classList.contains('is-open'), false);
   assert.match(elements.settingsSummaryInline.textContent, /EN/);

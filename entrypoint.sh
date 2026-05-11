@@ -69,7 +69,7 @@ start_processes() {
 
     gunicorn \
         --bind "${APP_HOST}:${APP_PORT}" \
-        --worker-class eventlet \
+        --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker \
         --workers 1 \
         --access-logfile - \
         --error-logfile - \

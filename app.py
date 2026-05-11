@@ -1,6 +1,13 @@
 import os
-import socket as socket_module
 import sys
+
+REQUESTED_SOCKETIO_ASYNC_MODE = os.environ.get("NTWA_SOCKETIO_ASYNC_MODE", "gevent")
+SOCKETIO_ASYNC_MODE = REQUESTED_SOCKETIO_ASYNC_MODE
+
+if SOCKETIO_ASYNC_MODE == "gevent":
+    from gevent import monkey
+
+    monkey.patch_all()
 
 try:
     import distutils  # noqa: F401
@@ -10,27 +17,13 @@ except ModuleNotFoundError:
     sys.modules.setdefault("distutils", _distutils)
     sys.modules.setdefault("distutils.version", _distutils.version)
 
-REQUESTED_SOCKETIO_ASYNC_MODE = os.environ.get("NTWA_SOCKETIO_ASYNC_MODE")
-SOCKETIO_ASYNC_MODE = REQUESTED_SOCKETIO_ASYNC_MODE
-EVENTLET_IMPORT_ERROR = None
-
-if REQUESTED_SOCKETIO_ASYNC_MODE != "threading":
-    try:
-        import eventlet
-
-        eventlet.monkey_patch()
-    except Exception as exc:  # pragma: no cover - exercised only on unsupported runtimes
-        EVENTLET_IMPORT_ERROR = exc
-        SOCKETIO_ASYNC_MODE = "threading"
-else:
-    eventlet = None
-
 import ipaddress
 import json
 import logging
 import re
 import secrets
 import shutil
+import socket as socket_module
 import subprocess
 import threading
 import time
@@ -78,11 +71,6 @@ def configure_logging():
 
 
 configure_logging()
-if EVENTLET_IMPORT_ERROR is not None:
-    logging.warning(
-        "Eventlet is unavailable on this runtime, falling back to threading async mode: %s",
-        EVENTLET_IMPORT_ERROR,
-    )
 
 
 def env_float(name: str, default: float) -> float:

@@ -288,7 +288,11 @@ function stopNexttrace() {
     clearScheduledRender();
     hideSelectionModal(false);
     uiState.taskStatus = uiState.rowsRendered > 0 ? 'complete' : 'idle';
-    setNotice(uiState.rowsRendered > 0 ? 'notice.stopped' : '', 'info');
+    if (uiState.rowsRendered > 0) {
+        setNotice('notice.stopped', 'info');
+    } else {
+        clearNotice();
+    }
     renderUi();
 }
 

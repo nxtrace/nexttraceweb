@@ -1,13 +1,30 @@
-var socket = io.connect(location.origin);
 var mtrAggApi = window.nextTraceMTRAgg;
 var uiStateApi = window.nextTraceUIState;
+var i18nApi = window.nextTraceI18n;
+var pathsApi = window.nextTracePaths;
+var socket = io.connect(location.origin, {
+    path: pathsApi.joinBasePath(location.pathname, 'socket.io')
+});
 var mtrAggregator = mtrAggApi.createMTRAggregator();
 var traceViewState = mtrAggApi.createTraceViewState();
 var renderTimer = null;
 var shareTimer = null;
 var modalCancelHandler = null;
+var activeLocale = i18nApi.DEFAULT_LOCALE;
+var tableHeaderHtml = mtrAggApi.TABLE_HEADER_HTML;
 var MTR_RENDER_INTERVAL_MS = 100;
 var RECENT_QUERIES_STORAGE_KEY = 'ntwaRecentQueries';
+var UI_LANGUAGE_STORAGE_KEY = 'uiLanguage';
+var LOCALIZED_SERVER_ERROR_CODES = [
+    'invalid_payload',
+    'invalid_target',
+    'start_failed',
+    'trace_capacity_exceeded',
+    'trace_idle_timeout',
+    'trace_max_duration_reached',
+    'trace_not_running',
+    'trace_rate_limited'
+];
 
 var uiState = {
     connectionStatus: 'connecting',
@@ -15,6 +32,7 @@ var uiState = {
     requestedTarget: '',
     resolvedTarget: '',
     rowsRendered: 0,
+    noticeKey: '',
     noticeMessage: '',
     noticeTone: 'info',
     recentQueries: [],
@@ -25,12 +43,48 @@ function $(id) {
     return document.getElementById(id);
 }
 
+function t(key) {
+    return i18nApi.translate(activeLocale, key);
+}
+
+function getBrowserLanguages() {
+    if (typeof navigator === 'undefined' || !navigator) {
+        return [];
+    }
+    if (Array.isArray(navigator.languages) && navigator.languages.length > 0) {
+        return navigator.languages;
+    }
+    return [navigator.language];
+}
+
+// A stored 'auto' preference (the default) resolves through the browser languages.
+function resolveActiveLocale() {
+    return i18nApi.detectLocale(localStorage.getItem(UI_LANGUAGE_STORAGE_KEY), getBrowserLanguages());
+}
+
+function applyLocale(locale) {
+    activeLocale = locale;
+    tableHeaderHtml = mtrAggApi.buildTableHeaderHtml(i18nApi.getTableHeaderLabels(locale));
+    i18nApi.applyDocumentTranslations(document, locale);
+}
+
+function syncLanguageSelect() {
+    $('uiLanguage').value = i18nApi.normalizePreference(localStorage.getItem(UI_LANGUAGE_STORAGE_KEY));
+}
+
+function handleLanguageChange() {
+    localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, i18nApi.normalizePreference($('uiLanguage').value));
+    applyLocale(resolveActiveLocale());
+    renderUi();
+    renderTable();
+}
+
 socket.on('connect', function () {
     console.log('Connected');
     uiState.connectionStatus = 'connected';
     if (uiState.taskStatus === 'disconnected') {
         uiState.taskStatus = uiState.rowsRendered > 0 ? 'complete' : 'idle';
-        setNotice('Connection restored. Start a new trace when ready.', 'info');
+        setNotice('notice.connectionRestored', 'info');
     }
     renderUi();
 });
@@ -43,7 +97,7 @@ socket.on('disconnect', function () {
     uiState.taskStatus = 'disconnected';
     hideSelectionModal(false);
     clearScheduledRender();
-    setNotice('Connection to the trace service was lost. Current results stay on screen.', 'error');
+    setNotice('notice.connectionLost', 'error');
     renderUi();
 });
 
@@ -70,25 +124,35 @@ socket.on('nexttrace_complete', function () {
 });
 
 socket.on('nexttrace_error', function (data) {
+    var noticeKey = getServerErrorKey(data);
+    var serverMessage = getServerErrorMessage(data);
     traceViewState.acceptUpdates = false;
     uiState.taskStatus = 'error';
-    setNotice(getErrorMessage(data), 'error');
+    if (noticeKey !== '') {
+        setNotice(noticeKey, 'error');
+    } else if (serverMessage !== '') {
+        setNoticeText(serverMessage, 'error');
+    } else {
+        setNotice('error.taskFailed', 'error');
+    }
     console.error('Nexttrace error:', data);
     renderUi();
 });
 
 socket.on('nexttrace_options', function (data) {
-    showSelectionModal('Choose a resolved IP', data, function (index) {
+    showSelectionModal(t('modal.ipSelector.title'), data, function (index) {
         socket.emit('nexttrace_options_choice', { choice: index + 1 });
     }, function () {
         traceViewState.acceptUpdates = false;
         uiState.taskStatus = 'idle';
-        setNotice('Target selection cancelled.', 'info');
+        setNotice('notice.selectionCancelled', 'info');
         renderUi();
     });
 });
 
 function initializePage() {
+    applyLocale(resolveActiveLocale());
+    syncLanguageSelect();
     uiState.recentQueries = uiStateApi.loadRecentQueries(localStorage.getItem(RECENT_QUERIES_STORAGE_KEY));
     restorePrimaryControls();
     bindPageEvents();
@@ -109,6 +173,7 @@ function bindPageEvents() {
     });
     $('ipVersion').addEventListener('change', persistPrimaryControlState);
     $('protocol').addEventListener('change', persistPrimaryControlState);
+    $('uiLanguage').addEventListener('change', handleLanguageChange);
     $('startBtn').addEventListener('click', function () {
         startNexttrace();
     });
@@ -184,7 +249,7 @@ async function startNexttrace() {
     var params = uiStateApi.normalizeQuery($('params').value);
     if (params === '') {
         uiState.taskStatus = 'error';
-        setNotice('Enter an IP, domain, or URL before starting a trace.', 'error');
+        setNotice('notice.emptyTarget', 'error');
         renderUi();
         return;
     }
@@ -203,7 +268,7 @@ async function startNexttrace() {
     if (resolvedTarget == null) {
         traceViewState.acceptUpdates = false;
         uiState.taskStatus = 'error';
-        setNotice('Invalid input or unresolvable domain. Adjust the target or switch resolve mode.', 'error');
+        setNotice('notice.unresolvable', 'error');
         renderUi();
         return;
     }
@@ -223,7 +288,7 @@ function stopNexttrace() {
     clearScheduledRender();
     hideSelectionModal(false);
     uiState.taskStatus = uiState.rowsRendered > 0 ? 'complete' : 'idle';
-    setNotice(uiState.rowsRendered > 0 ? 'Trace stopped. Current results are retained.' : '', 'info');
+    setNotice(uiState.rowsRendered > 0 ? 'notice.stopped' : '', 'info');
     renderUi();
 }
 
@@ -265,13 +330,13 @@ function scheduleTableRender() {
 function renderTable() {
     var rows = mtrAggApi.buildRenderableRows(mtrAggregator);
     uiState.rowsRendered = rows.length;
-    $('output').querySelector('tbody').innerHTML = mtrAggApi.renderTableHtml(rows);
+    $('output').querySelector('tbody').innerHTML = mtrAggApi.renderTableHtml(rows, tableHeaderHtml);
     renderStatusStrip();
     renderEmptyState();
 }
 
 function initTable() {
-    $('output').querySelector('tbody').innerHTML = mtrAggApi.TABLE_HEADER_HTML;
+    $('output').querySelector('tbody').innerHTML = tableHeaderHtml;
 }
 
 function renderUi() {
@@ -285,24 +350,26 @@ function renderUi() {
 
 function renderStatusStrip() {
     var meta = uiStateApi.deriveTaskMeta(uiState.taskStatus, uiState.connectionStatus, uiState.rowsRendered);
-    $('taskStatusBadge').textContent = meta.label;
+    $('taskStatusBadge').textContent = t(meta.labelKey);
     $('taskStatusBadge').setAttribute('data-tone', meta.tone);
-    $('taskStatusDetail').textContent = meta.detail;
-    $('targetSummary').textContent = uiStateApi.formatTargetSummary(uiState.requestedTarget, uiState.resolvedTarget);
-    $('connectionSummary').textContent = formatConnectionStatus(uiState.connectionStatus);
+    $('taskStatusDetail').textContent = t(meta.detailKey);
+    $('targetSummary').textContent = uiStateApi.formatTargetSummary(uiState.requestedTarget, uiState.resolvedTarget, t);
+    $('connectionSummary').textContent = t(uiStateApi.getConnectionStatusKey(uiState.connectionStatus));
     renderStatusSummary();
 }
 
 function renderStatusSummary() {
     var settings = readCurrentSettings();
-    var summary = uiStateApi.buildSettingsSummary(settings);
-    $('resolveModeSummary').textContent = uiStateApi.getResolveModeLabel(settings.localResolve);
+    var summary = uiStateApi.buildSettingsSummary(settings, t);
+    $('resolveModeSummary').textContent = t(uiStateApi.getResolveModeKey(settings.localResolve));
     $('settingsSummaryInline').textContent = summary.join(' · ');
 }
 
 function renderNotice() {
     var notice = $('noticeBanner');
-    if (!uiState.noticeMessage) {
+    var message = uiState.noticeKey !== '' ? t(uiState.noticeKey) : uiState.noticeMessage;
+
+    if (!message) {
         notice.hidden = true;
         notice.textContent = '';
         return;
@@ -310,7 +377,7 @@ function renderNotice() {
 
     notice.hidden = false;
     notice.setAttribute('data-tone', uiState.noticeTone || 'info');
-    notice.textContent = uiState.noticeMessage;
+    notice.textContent = message;
 }
 
 function renderEmptyState() {
@@ -323,8 +390,8 @@ function renderEmptyState() {
 
     panel.hidden = !emptyState.visible;
     panel.setAttribute('data-tone', emptyState.tone);
-    $('resultStateTitle').textContent = emptyState.title;
-    $('resultStateText').textContent = emptyState.description;
+    $('resultStateTitle').textContent = t(emptyState.titleKey);
+    $('resultStateText').textContent = t(emptyState.descriptionKey);
 }
 
 function renderRecentQueries() {
@@ -335,7 +402,7 @@ function renderRecentQueries() {
         container.classList.add('chip-list-empty');
         var emptyLabel = document.createElement('span');
         emptyLabel.className = 'helper-empty';
-        emptyLabel.textContent = 'Your recent traces will appear here.';
+        emptyLabel.textContent = t('panel.history.empty');
         container.appendChild(emptyLabel);
         return;
     }
@@ -357,7 +424,7 @@ function renderSettingsSummaryPanel() {
     var summaryItems = [
         $('ipVersion').value.toUpperCase(),
         $('protocol').value.toUpperCase()
-    ].concat(uiStateApi.buildSettingsSummary(settings));
+    ].concat(uiStateApi.buildSettingsSummary(settings, t));
 
     container.innerHTML = '';
     summaryItems.forEach(function (item) {
@@ -378,7 +445,7 @@ function renderActionButtons() {
     $('startBtn').disabled = actionState.startDisabled;
     $('stopBtn').disabled = actionState.stopDisabled;
     $('shareBtn').disabled = actionState.shareDisabled;
-    $('shareBtn').textContent = uiState.shareCopied ? 'Link Copied' : 'Copy Share Link';
+    $('shareBtn').textContent = uiState.shareCopied ? t('action.shareCopied') : t('action.share');
 }
 
 function syncTargetPreview() {
@@ -420,7 +487,7 @@ function copyShareLink() {
     copyTextToClipboard(shareUrl)
         .then(function () {
             uiState.shareCopied = true;
-            setNotice('Share link copied to clipboard.', 'success');
+            setNotice('notice.shareCopied', 'success');
             renderActionButtons();
             if (shareTimer !== null) {
                 clearTimeout(shareTimer);
@@ -431,7 +498,7 @@ function copyShareLink() {
             }, 1800);
         })
         .catch(function () {
-            setNotice('Copy failed. You can still copy the current URL manually.', 'error');
+            setNotice('notice.shareFailed', 'error');
         });
 }
 
@@ -520,26 +587,48 @@ function hideSelectionModal(triggerCancel) {
     modalCancelHandler = null;
 }
 
-function setNotice(message, tone) {
+// Notices keep a translation key so they follow a language switch. Server-provided
+// messages have no key and are shown verbatim through setNoticeText.
+function setNotice(messageKey, tone) {
+    uiState.noticeKey = messageKey || '';
+    uiState.noticeMessage = '';
+    uiState.noticeTone = tone || 'info';
+    renderNotice();
+}
+
+function setNoticeText(message, tone) {
+    uiState.noticeKey = '';
     uiState.noticeMessage = message || '';
     uiState.noticeTone = tone || 'info';
     renderNotice();
 }
 
 function clearNotice() {
+    uiState.noticeKey = '';
     uiState.noticeMessage = '';
     uiState.noticeTone = 'info';
     renderNotice();
 }
 
-function getErrorMessage(data) {
+// Codes whose server message is a fixed sentence get localized copy instead. The
+// remaining codes (nexttrace_exit_nonzero, nexttrace_invalid_args) carry nexttrace's own
+// diagnostic output in `message`, which is shown verbatim.
+function getServerErrorKey(data) {
+    var code = data && typeof data.code === 'string' ? data.code : '';
+    if (code === '') {
+        return '';
+    }
+    return LOCALIZED_SERVER_ERROR_CODES.indexOf(code) === -1 ? '' : 'serverError.' + code;
+}
+
+function getServerErrorMessage(data) {
     if (typeof data === 'string' && data.trim() !== '') {
         return data.trim();
     }
     if (data && typeof data.message === 'string' && data.message.trim() !== '') {
         return data.message.trim();
     }
-    return '任务执行失败';
+    return '';
 }
 
 function getValueFromLocalStorage(key) {
@@ -588,7 +677,9 @@ function fetchWithTimeout(url, options, timeout) {
         fetch(url, options),
         new Promise(function (_, reject) {
             setTimeout(function () {
-                reject(new Error('请求超时'));
+                // resolveDomain swallows this to fall through to the next DoH endpoint,
+                // so it never reaches the user and stays an untranslated diagnostic.
+                reject(new Error('doh request timeout'));
             }, timeout);
         })
     ]);
@@ -638,7 +729,7 @@ function resolveDomain(domain) {
             })
             .then(function () {
                 if (resolvedAddresses.length > 1) {
-                    showSelectionModal('Choose a resolved IP', resolvedAddresses, function (index) {
+                    showSelectionModal(t('modal.ipSelector.title'), resolvedAddresses, function (index) {
                         resolve(resolvedAddresses[index]);
                     }, function () {
                         resolve(null);
@@ -685,16 +776,6 @@ function parseDomain(domain) {
 
 function isIpLiteral(value) {
     return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(value) || /^[a-fA-F0-9:]+$/.test(value);
-}
-
-function formatConnectionStatus(status) {
-    if (status === 'connected') {
-        return 'Connected';
-    }
-    if (status === 'disconnected') {
-        return 'Disconnected';
-    }
-    return 'Connecting';
 }
 
 function deviceValidateInput() {

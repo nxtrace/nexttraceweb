@@ -1,23 +1,36 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>NextTrace Web</title>
+    <title data-i18n="app.title">NextTrace Web</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/assets/css/m.css" type="text/css">
-    <script src="/assets/js/socket.io.js" defer></script>
-    <script src="/assets/js/mtr-agg.js" defer></script>
-    <script src="/assets/js/ui-state.js" defer></script>
-    <script src="/assets/js/main.js" defer></script>
-    <script src="/assets/js/settingsmenu.js" defer></script>
+    <link rel="stylesheet" href="assets/css/m.css" type="text/css">
+    <script src="assets/js/socket.io.js" defer></script>
+    <script src="assets/js/paths.js" defer></script>
+    <script src="assets/js/i18n.js" defer></script>
+    <script src="assets/js/mtr-agg.js" defer></script>
+    <script src="assets/js/ui-state.js" defer></script>
+    <script src="assets/js/main.js" defer></script>
+    <script src="assets/js/settingsmenu.js" defer></script>
 </head>
 <body>
 <div class="page-shell">
     <header class="app-header">
         <div class="brand-copy">
-            <p class="eyebrow">ping.pe inspired traceroute surface</p>
+            <p class="eyebrow" data-i18n="header.eyebrow">ping.pe inspired traceroute surface</p>
             <h1>NextTrace Web</h1>
-            <p class="tagline">Stream hop-by-hop route data with a denser layout, clearer state feedback, and faster repeat workflows.</p>
+            <p class="tagline" data-i18n="header.tagline">Stream hop-by-hop route data with a denser layout, clearer state feedback, and faster repeat workflows.</p>
+        </div>
+
+        <div class="header-tools">
+            <label class="field field-language" for="uiLanguage">
+                <span class="field-label" data-i18n="header.language">Interface</span>
+                <select id="uiLanguage" name="uiLanguage" class="select-input">
+                    <option value="auto" data-i18n="language.auto">Auto</option>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                </select>
+            </label>
         </div>
     </header>
 
@@ -25,12 +38,12 @@
         <form id="traceForm" class="trace-form" novalidate>
             <div class="control-row">
                 <label class="field field-target" for="params">
-                    <span class="field-label">Target</span>
-                    <input type="text" id="params" class="text-input" placeholder="IP / domain / URL" autocomplete="off">
+                    <span class="field-label" data-i18n="form.target.label">Target</span>
+                    <input type="text" id="params" class="text-input" placeholder="IP / domain / URL" data-i18n-placeholder="form.target.placeholder" autocomplete="off">
                 </label>
 
                 <label class="field field-compact" for="ipVersion">
-                    <span class="field-label">IP Version</span>
+                    <span class="field-label" data-i18n="form.ipVersion.label">IP Version</span>
                     <select id="ipVersion" name="ipVersion" class="select-input">
                         <option value="all">ALL</option>
                         <option value="ipv4">IPv4</option>
@@ -39,7 +52,7 @@
                 </label>
 
                 <label class="field field-compact" for="protocol">
-                    <span class="field-label">Protocol</span>
+                    <span class="field-label" data-i18n="form.protocol.label">Protocol</span>
                     <select id="protocol" name="protocol" class="select-input">
                         <option value="icmp">ICMP</option>
                         <option value="tcp">TCP</option>
@@ -47,39 +60,39 @@
                     </select>
                 </label>
 
-                <button type="button" id="startBtn" class="btn btn-primary">Start</button>
-                <button type="button" id="stopBtn" class="btn btn-secondary">Stop</button>
-                <button type="button" id="resetBtn" class="btn btn-ghost">Reset</button>
-                <button type="button" id="settingBtn" class="btn btn-ghost" aria-controls="settingMenu" aria-expanded="false">Settings</button>
+                <button type="button" id="startBtn" class="btn btn-primary" data-i18n="action.start">Start</button>
+                <button type="button" id="stopBtn" class="btn btn-secondary" data-i18n="action.stop">Stop</button>
+                <button type="button" id="resetBtn" class="btn btn-ghost" data-i18n="action.reset">Reset</button>
+                <button type="button" id="settingBtn" class="btn btn-ghost" aria-controls="settingMenu" aria-expanded="false" data-i18n="action.settings">Settings</button>
             </div>
 
             <div class="status-strip">
                 <div class="status-primary">
-                    <span id="taskStatusBadge" class="status-badge" data-tone="neutral">Idle</span>
-                    <p id="taskStatusDetail" class="status-detail">Ready for a new trace.</p>
+                    <span id="taskStatusBadge" class="status-badge" data-tone="neutral" data-i18n="state.idle.label">Idle</span>
+                    <p id="taskStatusDetail" class="status-detail" data-i18n="state.idle.detail">Ready for a new trace.</p>
                 </div>
 
                 <div class="status-facts">
                     <div class="status-fact">
-                        <span class="fact-label">Target</span>
-                        <span id="targetSummary" class="fact-value">Not set</span>
+                        <span class="fact-label" data-i18n="status.fact.target">Target</span>
+                        <span id="targetSummary" class="fact-value" data-i18n="target.notSet">Not set</span>
                     </div>
                     <div class="status-fact">
-                        <span class="fact-label">Connection</span>
-                        <span id="connectionSummary" class="fact-value">Connecting</span>
+                        <span class="fact-label" data-i18n="status.fact.connection">Connection</span>
+                        <span id="connectionSummary" class="fact-value" data-i18n="connection.connecting">Connecting</span>
                     </div>
                     <div class="status-fact">
-                        <span class="fact-label">Resolve</span>
-                        <span id="resolveModeSummary" class="fact-value">Local Resolve</span>
+                        <span class="fact-label" data-i18n="status.fact.resolve">Resolve</span>
+                        <span id="resolveModeSummary" class="fact-value" data-i18n="summary.resolve.local">Local Resolve</span>
                     </div>
                     <div class="status-fact">
-                        <span class="fact-label">Settings</span>
+                        <span class="fact-label" data-i18n="status.fact.settings">Settings</span>
                         <span id="settingsSummaryInline" class="fact-value">CN · Local Resolve</span>
                     </div>
                 </div>
 
                 <div class="status-tools">
-                    <button type="button" id="shareBtn" class="btn btn-inline">Copy Share Link</button>
+                    <button type="button" id="shareBtn" class="btn btn-inline" data-i18n="action.share">Copy Share Link</button>
                 </div>
             </div>
         </form>
@@ -90,18 +103,18 @@
             <div id="noticeBanner" class="notice-banner" data-tone="info" hidden></div>
 
             <div id="resultEmptyState" class="result-state" data-tone="neutral">
-                <p class="eyebrow">trace state</p>
-                <h2 id="resultStateTitle">Ready for a new trace</h2>
-                <p id="resultStateText">Enter an IP, domain, or URL to start streaming hop data.</p>
+                <p class="eyebrow" data-i18n="results.eyebrow">trace state</p>
+                <h2 id="resultStateTitle" data-i18n="empty.idle.title">Ready for a new trace</h2>
+                <p id="resultStateText" data-i18n="empty.idle.description">Enter an IP, domain, or URL to start streaming hop data.</p>
             </div>
 
             <div class="table-panel">
                 <div class="table-panel-header">
                     <div>
-                        <p class="eyebrow">streaming hop view</p>
-                        <h2>Trace Output</h2>
+                        <p class="eyebrow" data-i18n="table.eyebrow">streaming hop view</p>
+                        <h2 data-i18n="table.title">Trace Output</h2>
                     </div>
-                    <p class="table-hint">Sticky header, horizontal scroll on narrow screens, raw TTL aggregation unchanged.</p>
+                    <p class="table-hint" data-i18n="table.hint">Sticky header, horizontal scroll on narrow screens, raw TTL aggregation unchanged.</p>
                 </div>
 
                 <div class="table-shell">
@@ -132,21 +145,21 @@
             <section class="helper-card">
                 <div class="helper-card-header">
                     <div>
-                        <p class="eyebrow">history</p>
-                        <h2>Recent Queries</h2>
+                        <p class="eyebrow" data-i18n="panel.history.eyebrow">history</p>
+                        <h2 data-i18n="panel.history.title">Recent Queries</h2>
                     </div>
-                    <span class="helper-card-meta">stored locally</span>
+                    <span class="helper-card-meta" data-i18n="panel.history.meta">stored locally</span>
                 </div>
                 <div id="recentQueries" class="chip-list chip-list-empty">
-                    <span class="helper-empty">Your recent traces will appear here.</span>
+                    <span class="helper-empty" data-i18n="panel.history.empty">Your recent traces will appear here.</span>
                 </div>
             </section>
 
             <section class="helper-card">
                 <div class="helper-card-header">
                     <div>
-                        <p class="eyebrow">quick start</p>
-                        <h2>Example Targets</h2>
+                        <p class="eyebrow" data-i18n="panel.examples.eyebrow">quick start</p>
+                        <h2 data-i18n="panel.examples.title">Example Targets</h2>
                     </div>
                 </div>
                 <div class="chip-list">
@@ -162,8 +175,8 @@
             <section class="helper-card">
                 <div class="helper-card-header">
                     <div>
-                        <p class="eyebrow">effective configuration</p>
-                        <h2>Current Settings</h2>
+                        <p class="eyebrow" data-i18n="panel.settings.eyebrow">effective configuration</p>
+                        <h2 data-i18n="panel.settings.title">Current Settings</h2>
                     </div>
                 </div>
                 <div id="settingsSummaryPanel" class="chip-list"></div>
@@ -184,31 +197,31 @@
 >
     <div class="drawer-header">
         <div>
-            <p class="eyebrow">runtime settings</p>
-            <h2 id="settingsDrawerTitle">Trace Settings</h2>
+            <p class="eyebrow" data-i18n="settings.eyebrow">runtime settings</p>
+            <h2 id="settingsDrawerTitle" data-i18n="settings.title">Trace Settings</h2>
         </div>
-        <button type="button" id="settingCloseBtn" class="drawer-close" aria-label="Close settings">&times;</button>
+        <button type="button" id="settingCloseBtn" class="drawer-close" aria-label="Close settings" data-i18n-aria-label="settings.close">&times;</button>
     </div>
 
     <div class="settings-grid">
         <label class="field" for="language">
-            <span class="field-label">Language</span>
+            <span class="field-label" data-i18n="settings.language.label">Geo Data Language</span>
             <select id="language" name="language" class="select-input">
-                <option value="cn">Chinese</option>
-                <option value="en">English</option>
+                <option value="cn" data-i18n="settings.language.zh">Chinese</option>
+                <option value="en" data-i18n="settings.language.en">English</option>
             </select>
         </label>
 
         <label class="field field-toggle" for="localResolveCheckbox">
-            <span class="field-label">Resolve Mode</span>
+            <span class="field-label" data-i18n="settings.resolve.label">Resolve Mode</span>
             <span class="toggle-card">
                 <input type="checkbox" id="localResolveCheckbox" checked>
-                <span>Prefer local DoH resolve before starting the trace</span>
+                <span data-i18n="settings.resolve.hint">Prefer local DoH resolve before starting the trace</span>
             </span>
         </label>
 
         <label class="field field-span-2" for="intervalTimeSlider">
-            <span class="field-label">Probe Interval Seconds</span>
+            <span class="field-label" data-i18n="settings.interval.label">Probe Interval Seconds</span>
             <div id="intervalTimeSlider" class="range-pair">
                 <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="0.040">
                 <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="0.040">
@@ -216,7 +229,7 @@
         </label>
 
         <label class="field field-span-2" for="packetSizeSlider">
-            <span class="field-label">Packet Size</span>
+            <span class="field-label" data-i18n="settings.packetSize.label">Packet Size</span>
             <div id="packetSizeSlider" class="range-pair">
                 <input type="range" id="packetSizeRange" min="0" max="1500" step="1" value="52">
                 <input type="number" id="packetSizeInput" min="0" max="1500" step="1" value="52">
@@ -224,30 +237,30 @@
         </label>
 
         <label class="field" for="maxHopInput">
-            <span class="field-label">Max Hop</span>
+            <span class="field-label" data-i18n="settings.maxHop.label">Max Hop</span>
             <input type="number" id="maxHopInput" class="text-input" min="1" max="30" step="1" value="30">
         </label>
 
         <label class="field" for="minHopInput">
-            <span class="field-label">Min Hop</span>
+            <span class="field-label" data-i18n="settings.minHop.label">Min Hop</span>
             <input type="number" id="minHopInput" class="text-input" min="1" max="30" step="1" value="1">
         </label>
 
         <label class="field" for="portInput">
-            <span class="field-label">Port</span>
+            <span class="field-label" data-i18n="settings.port.label">Port</span>
             <input type="number" id="portInput" class="text-input" min="1" max="65535" step="1" value="80">
         </label>
 
         <label class="field" for="devInput">
-            <span class="field-label">Device</span>
-            <input type="text" id="devInput" class="text-input" list="deviceOptions" placeholder="Device">
+            <span class="field-label" data-i18n="settings.device.label">Device</span>
+            <input type="text" id="devInput" class="text-input" list="deviceOptions" placeholder="Device" data-i18n-placeholder="settings.device.placeholder">
             <datalist id="deviceOptions"></datalist>
-            <span id="dev-error-message" class="validation-message">Invalid device name.</span>
+            <span id="dev-error-message" class="validation-message" data-i18n="settings.device.error">Invalid device name.</span>
         </label>
 
         <label class="field field-span-2" for="dataProvider">
-            <span class="field-label">Geo Data Provider</span>
-            <input type="text" list="dataProviders" id="dataProvider" class="text-input" placeholder="dataProvider">
+            <span class="field-label" data-i18n="settings.dataProvider.label">Geo Data Provider</span>
+            <input type="text" list="dataProviders" id="dataProvider" class="text-input" placeholder="dataProvider" data-i18n-placeholder="settings.dataProvider.placeholder">
             <datalist id="dataProviders">
                 <option value="LeoMoeAPI">
                 <option value="Ip2region">
@@ -259,12 +272,12 @@
                 <option value="Chunzhen">
                 <option value="Disable-geoip">
             </datalist>
-            <span id="dp-error-message" class="validation-message">Invalid data provider.</span>
+            <span id="dp-error-message" class="validation-message" data-i18n="settings.dataProvider.error">Invalid data provider.</span>
         </label>
     </div>
 
     <div class="drawer-actions">
-        <button type="button" id="saveBtn" class="btn btn-primary">Save Settings</button>
+        <button type="button" id="saveBtn" class="btn btn-primary" data-i18n="settings.save">Save Settings</button>
     </div>
 </aside>
 
@@ -272,10 +285,10 @@
     <div class="modal-card">
         <div class="modal-header">
             <div>
-                <p class="eyebrow">resolver result</p>
-                <h2 id="ipSelectorTitle">请选择一个IP地址</h2>
+                <p class="eyebrow" data-i18n="modal.ipSelector.eyebrow">resolver result</p>
+                <h2 id="ipSelectorTitle" data-i18n="modal.ipSelector.title">Choose a resolved IP</h2>
             </div>
-            <button type="button" class="drawer-close" id="ipSelectorClose" aria-label="Close selector">&times;</button>
+            <button type="button" class="drawer-close" id="ipSelectorClose" aria-label="Close selector" data-i18n-aria-label="modal.close">&times;</button>
         </div>
         <div id="ip-list" class="modal-list"></div>
     </div>

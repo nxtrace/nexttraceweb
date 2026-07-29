@@ -173,7 +173,7 @@ function loadAvailableDevices() {
         return Promise.resolve();
     }
 
-    return fetch('/api/devices', {
+    return fetch(window.nextTracePaths.joinBasePath(window.location.pathname, 'api/devices'), {
         headers: { accept: 'application/json' }
     })
         .then(function (response) {

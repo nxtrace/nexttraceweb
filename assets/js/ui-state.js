@@ -58,12 +58,34 @@
         return url.toString();
     }
 
-    function getResolveModeLabel(localResolve) {
-        return localResolve ? 'Local Resolve' : 'Server Resolve';
+    // Translation keys are returned instead of literals so this module stays free of
+    // user-facing copy. Callers pass a translate function; without one the key comes back.
+    function createKeyTranslator(translate) {
+        if (typeof translate === 'function') {
+            return translate;
+        }
+        return function (key) {
+            return key;
+        };
     }
 
-    function buildSettingsSummary(settings) {
+    function getResolveModeKey(localResolve) {
+        return localResolve ? 'summary.resolve.local' : 'summary.resolve.server';
+    }
+
+    function getConnectionStatusKey(connectionStatus) {
+        if (connectionStatus === 'connected') {
+            return 'connection.connected';
+        }
+        if (connectionStatus === 'disconnected') {
+            return 'connection.disconnected';
+        }
+        return 'connection.connecting';
+    }
+
+    function buildSettingsSummary(settings, translate) {
         settings = settings || {};
+        var translateKey = createKeyTranslator(translate);
         var summary = [];
         var language = normalizeQuery(settings.language).toUpperCase() || 'CN';
         var intervalSeconds = Number(settings.intervalSeconds);
@@ -71,7 +93,7 @@
         var dataProvider = normalizeQuery(settings.dataProvider);
 
         summary.push(language);
-        summary.push(getResolveModeLabel(Boolean(settings.localResolve)));
+        summary.push(translateKey(getResolveModeKey(Boolean(settings.localResolve))));
 
         if (Number.isFinite(intervalSeconds) && intervalSeconds > 0) {
             summary.push(String(Math.round(intervalSeconds * 1000)) + ' ms');
@@ -86,12 +108,12 @@
         return summary;
     }
 
-    function formatTargetSummary(query, resolvedTarget) {
+    function formatTargetSummary(query, resolvedTarget, translate) {
         var normalizedQuery = normalizeQuery(query);
         var normalizedResolvedTarget = normalizeQuery(resolvedTarget);
 
         if (normalizedQuery === '' && normalizedResolvedTarget === '') {
-            return 'Not set';
+            return createKeyTranslator(translate)('target.notSet');
         }
         if (
             normalizedQuery !== '' &&
@@ -117,39 +139,39 @@
     function deriveTaskMeta(taskStatus, connectionStatus, rowCount) {
         if (connectionStatus === 'disconnected') {
             return {
-                label: 'Disconnected',
+                labelKey: 'state.disconnected.label',
                 tone: 'error',
-                detail: rowCount > 0
-                    ? 'Connection lost. Current results stay on screen.'
-                    : 'Connection lost. Reconnect before starting a new trace.'
+                detailKey: rowCount > 0
+                    ? 'state.disconnected.detail'
+                    : 'state.disconnected.detailEmpty'
             };
         }
 
         switch (taskStatus) {
         case 'resolving':
-            return { label: 'Resolving', tone: 'info', detail: 'Resolving the target before starting the trace.' };
+            return { labelKey: 'state.resolving.label', tone: 'info', detailKey: 'state.resolving.detail' };
         case 'waiting':
-            return { label: 'Waiting', tone: 'warning', detail: 'Trace started. Waiting for the first hop.' };
+            return { labelKey: 'state.waiting.label', tone: 'warning', detailKey: 'state.waiting.detail' };
         case 'running':
-            return { label: 'Running', tone: 'success', detail: 'Streaming hop data in real time.' };
+            return { labelKey: 'state.running.label', tone: 'success', detailKey: 'state.running.detail' };
         case 'complete':
             return {
-                label: 'Complete',
+                labelKey: 'state.complete.label',
                 tone: rowCount > 0 ? 'success' : 'info',
-                detail: rowCount > 0
-                    ? 'Trace finished. Results are retained until you reset.'
-                    : 'Trace finished without any hop data.'
+                detailKey: rowCount > 0
+                    ? 'state.complete.detail'
+                    : 'state.complete.detailEmpty'
             };
         case 'error':
             return {
-                label: 'Error',
+                labelKey: 'state.error.label',
                 tone: 'error',
-                detail: rowCount > 0
-                    ? 'The trace ended with an error. Current results are retained.'
-                    : 'The trace could not be started. Adjust the target or settings.'
+                detailKey: rowCount > 0
+                    ? 'state.error.detail'
+                    : 'state.error.detailEmpty'
             };
         default:
-            return { label: 'Idle', tone: 'neutral', detail: 'Ready for a new trace.' };
+            return { labelKey: 'state.idle.label', tone: 'neutral', detailKey: 'state.idle.detail' };
         }
     }
 
@@ -158,8 +180,8 @@
             return {
                 visible: false,
                 tone: 'neutral',
-                title: '',
-                description: ''
+                titleKey: '',
+                descriptionKey: ''
             };
         }
 
@@ -167,8 +189,8 @@
             return {
                 visible: true,
                 tone: 'error',
-                title: 'Disconnected',
-                description: 'The trace service is unreachable. Reconnect and start again when the session returns.'
+                titleKey: 'empty.disconnected.title',
+                descriptionKey: 'empty.disconnected.description'
             };
         }
 
@@ -177,37 +199,37 @@
             return {
                 visible: true,
                 tone: 'info',
-                title: 'Resolving target',
-                description: 'Checking the target and resolving DNS before the trace starts.'
+                titleKey: 'empty.resolving.title',
+                descriptionKey: 'empty.resolving.description'
             };
         case 'waiting':
         case 'running':
             return {
                 visible: true,
                 tone: 'warning',
-                title: 'Waiting for first hop',
-                description: 'The trace is running. Results will appear here as soon as the first hop arrives.'
+                titleKey: 'empty.waiting.title',
+                descriptionKey: 'empty.waiting.description'
             };
         case 'error':
             return {
                 visible: true,
                 tone: 'error',
-                title: 'Trace failed',
-                description: 'Adjust the target or settings, then try again.'
+                titleKey: 'empty.error.title',
+                descriptionKey: 'empty.error.description'
             };
         case 'complete':
             return {
                 visible: true,
                 tone: 'info',
-                title: 'Trace finished',
-                description: 'The task completed, but no hop data was captured.'
+                titleKey: 'empty.complete.title',
+                descriptionKey: 'empty.complete.description'
             };
         default:
             return {
                 visible: true,
                 tone: 'neutral',
-                title: 'Ready for a new trace',
-                description: 'Enter an IP, domain, or URL to start streaming hop data.'
+                titleKey: 'empty.idle.title',
+                descriptionKey: 'empty.idle.description'
             };
         }
     }
@@ -246,7 +268,8 @@
         deriveEmptyState: deriveEmptyState,
         deriveTaskMeta: deriveTaskMeta,
         formatTargetSummary: formatTargetSummary,
-        getResolveModeLabel: getResolveModeLabel,
+        getConnectionStatusKey: getConnectionStatusKey,
+        getResolveModeKey: getResolveModeKey,
         loadRecentQueries: loadRecentQueries,
         normalizeQuery: normalizeQuery,
         upsertRecentQuery: upsertRecentQuery

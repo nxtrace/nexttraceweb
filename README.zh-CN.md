@@ -49,6 +49,39 @@ docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb [::1]:3
 
 建议不要直接把服务裸露在公网，认证和访问控制请放在外层反代或网关上处理。
 
+## 界面语言
+
+界面已支持英文和简体中文。页头的语言选择器默认为 **跟随系统**，即按浏览器的 `Accept-Language` 自动选择；也可以固定为 `English` 或 `中文`。选择结果保存在 `localStorage` 的 `uiLanguage` 中。
+
+设置抽屉里的 **地理数据语言** 是另一回事——它会直接传给 `nexttrace`，只影响地理位置数据的语言，不影响界面语言。
+
+## 二级路径部署
+
+静态资源、`/api/devices` 接口以及 Socket.IO 的路径都基于当前页面所在目录做相对解析，因此可以部署在二级路径下。外层反代需要**剥离路径前缀**（注意 `location` 和 `proxy_pass` 都要带结尾斜杠），并为不带结尾斜杠的地址加上跳转：
+
+```nginx
+# 放在 http 块中，$connection_upgrade 不是 nginx 内置变量：
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 放在 server 块中，把 https://example.com/tools/nexttrace/ 映射到容器根路径：
+location = /tools/nexttrace {
+    return 301 /tools/nexttrace/;
+}
+
+location /tools/nexttrace/ {
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass http://127.0.0.1:30080/;
+}
+```
+
+两处结尾斜杠都很关键。漏掉 `proxy_pass` 上的那个，后端就会收到 `/tools/nexttrace/...`，没有对应路由。那条 301 用于兜住地址栏里漏掉结尾斜杠的用户：此时浏览器会把相对引用解析到上一级目录，资源会被请求到 `/tools/assets/...`，页面会失去样式。
+
 ## 运行时说明
 
 - 健康检查接口：`GET /healthz`

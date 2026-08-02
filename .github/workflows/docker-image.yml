@@ -67,14 +67,16 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
 
       - name: Check browser scripts
         run: |
+          node --check assets/js/i18n.js
           node --check assets/js/main.js
           node --check assets/js/mtr-agg.js
+          node --check assets/js/paths.js
           node --check assets/js/settingsmenu.js
           node --check assets/js/ui-state.js
           node --check tests/browser-harness.cjs

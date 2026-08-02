@@ -286,7 +286,7 @@ function matchesSelector(element, selector) {
   if (selector.startsWith('.')) {
     return element.classList.contains(selector.slice(1));
   }
-  const dataSelector = selector.match(/^\[data-([a-z-]+)\]$/);
+  const dataSelector = selector.match(/^\[data-([a-z0-9-]+)\]$/);
   if (dataSelector) {
     return Object.prototype.hasOwnProperty.call(element.dataset, toCamelCase(dataSelector[1]));
   }
@@ -371,6 +371,7 @@ function createBrowserHarness(options = {}) {
   const document = new FakeDocument(options.url || 'https://example.test/');
   const localStorage = new FakeStorage(options.storage || {});
   const socket = createSocket();
+  const socketConnections = [];
   const clipboardWrites = [];
   const consoleObject = options.console || console;
   const windowObject = {
@@ -378,6 +379,7 @@ function createBrowserHarness(options = {}) {
     localStorage,
     location: document.location,
     navigator: {
+      languages: options.languages,
       clipboard: {
         writeText(text) {
           clipboardWrites.push(text);
@@ -388,33 +390,73 @@ function createBrowserHarness(options = {}) {
   };
 
   const body = document.body;
+  const appHeader = appendElement(document, body, 'header', 'appHeader');
+  const uiLanguage = appendElement(document, appHeader, 'select', 'uiLanguage', { value: 'auto' });
+  appendElement(document, uiLanguage, 'option', '', {
+    value: 'auto',
+    textContent: 'Auto',
+    attributes: { 'data-i18n': 'language.auto' }
+  });
+  appendElement(document, uiLanguage, 'option', '', { value: 'en', textContent: 'English' });
+  appendElement(document, uiLanguage, 'option', '', { value: 'zh', textContent: '中文' });
+
   const traceForm = appendElement(document, body, 'form', 'traceForm');
-  const params = appendElement(document, traceForm, 'input', 'params', { type: 'text' });
+  const params = appendElement(document, traceForm, 'input', 'params', {
+    type: 'text',
+    attributes: { 'data-i18n-placeholder': 'form.target.placeholder' }
+  });
   const ipVersion = appendElement(document, traceForm, 'select', 'ipVersion', { value: 'all' });
   const protocol = appendElement(document, traceForm, 'select', 'protocol', { value: 'icmp' });
-  const startBtn = appendElement(document, traceForm, 'button', 'startBtn', { textContent: 'Start' });
-  const stopBtn = appendElement(document, traceForm, 'button', 'stopBtn', { textContent: 'Stop' });
-  const resetBtn = appendElement(document, traceForm, 'button', 'resetBtn', { textContent: 'Reset' });
+  const startBtn = appendElement(document, traceForm, 'button', 'startBtn', {
+    textContent: 'Start',
+    attributes: { 'data-i18n': 'action.start' }
+  });
+  const stopBtn = appendElement(document, traceForm, 'button', 'stopBtn', {
+    textContent: 'Stop',
+    attributes: { 'data-i18n': 'action.stop' }
+  });
+  const resetBtn = appendElement(document, traceForm, 'button', 'resetBtn', {
+    textContent: 'Reset',
+    attributes: { 'data-i18n': 'action.reset' }
+  });
   const settingBtn = appendElement(document, traceForm, 'button', 'settingBtn', {
     textContent: 'Settings',
     attributes: {
       'aria-controls': 'settingMenu',
-      'aria-expanded': 'false'
+      'aria-expanded': 'false',
+      'data-i18n': 'action.settings'
     }
   });
-  const shareBtn = appendElement(document, traceForm, 'button', 'shareBtn', { textContent: 'Copy Share Link' });
+  const shareBtn = appendElement(document, traceForm, 'button', 'shareBtn', {
+    textContent: 'Copy Share Link',
+    attributes: { 'data-i18n': 'action.share' }
+  });
 
-  appendElement(document, traceForm, 'span', 'taskStatusBadge');
-  appendElement(document, traceForm, 'p', 'taskStatusDetail');
-  appendElement(document, traceForm, 'span', 'targetSummary');
-  appendElement(document, traceForm, 'span', 'connectionSummary');
-  appendElement(document, traceForm, 'span', 'resolveModeSummary');
+  appendElement(document, traceForm, 'span', 'taskStatusBadge', {
+    attributes: { 'data-i18n': 'state.idle.label' }
+  });
+  appendElement(document, traceForm, 'p', 'taskStatusDetail', {
+    attributes: { 'data-i18n': 'state.idle.detail' }
+  });
+  appendElement(document, traceForm, 'span', 'targetSummary', {
+    attributes: { 'data-i18n': 'target.notSet' }
+  });
+  appendElement(document, traceForm, 'span', 'connectionSummary', {
+    attributes: { 'data-i18n': 'connection.connecting' }
+  });
+  appendElement(document, traceForm, 'span', 'resolveModeSummary', {
+    attributes: { 'data-i18n': 'summary.resolve.local' }
+  });
   appendElement(document, traceForm, 'span', 'settingsSummaryInline');
 
   appendElement(document, body, 'div', 'noticeBanner', { hidden: true });
   appendElement(document, body, 'section', 'resultEmptyState', { hidden: false });
-  appendElement(document, body, 'h2', 'resultStateTitle');
-  appendElement(document, body, 'p', 'resultStateText');
+  appendElement(document, body, 'h2', 'resultStateTitle', {
+    attributes: { 'data-i18n': 'empty.idle.title' }
+  });
+  appendElement(document, body, 'p', 'resultStateText', {
+    attributes: { 'data-i18n': 'empty.idle.description' }
+  });
 
   const output = appendElement(document, body, 'table', 'output');
   const tbody = appendElement(document, output, 'tbody', '');
@@ -436,7 +478,13 @@ function createBrowserHarness(options = {}) {
     attributes: { 'aria-hidden': 'true' },
     className: 'settings-drawer'
   });
-  appendElement(document, settingMenu, 'button', 'settingCloseBtn', { textContent: 'x' });
+  appendElement(document, settingMenu, 'h2', 'settingsDrawerTitle', {
+    attributes: { 'data-i18n': 'settings.title' }
+  });
+  appendElement(document, settingMenu, 'button', 'settingCloseBtn', {
+    textContent: 'x',
+    attributes: { 'data-i18n-aria-label': 'settings.close' }
+  });
   appendElement(document, settingMenu, 'select', 'language', { value: 'cn' });
   appendElement(document, settingMenu, 'input', 'localResolveCheckbox', { type: 'checkbox', checked: true });
   appendElement(document, settingMenu, 'input', 'intervalTimeRange', { type: 'range', value: '0.040' });
@@ -449,17 +497,36 @@ function createBrowserHarness(options = {}) {
   appendElement(document, settingMenu, 'input', 'devInput', {
     type: 'text',
     value: '',
-    attributes: { list: 'deviceOptions' }
+    attributes: {
+      list: 'deviceOptions',
+      'data-i18n-placeholder': 'settings.device.placeholder'
+    }
   });
   appendElement(document, settingMenu, 'datalist', 'deviceOptions');
-  appendElement(document, settingMenu, 'span', 'dev-error-message');
-  appendElement(document, settingMenu, 'input', 'dataProvider', { type: 'text', value: '' });
-  appendElement(document, settingMenu, 'span', 'dp-error-message');
-  appendElement(document, settingMenu, 'button', 'saveBtn', { textContent: 'Save Settings' });
+  appendElement(document, settingMenu, 'span', 'dev-error-message', {
+    attributes: { 'data-i18n': 'settings.device.error' }
+  });
+  appendElement(document, settingMenu, 'input', 'dataProvider', {
+    type: 'text',
+    value: '',
+    attributes: { 'data-i18n-placeholder': 'settings.dataProvider.placeholder' }
+  });
+  appendElement(document, settingMenu, 'span', 'dp-error-message', {
+    attributes: { 'data-i18n': 'settings.dataProvider.error' }
+  });
+  appendElement(document, settingMenu, 'button', 'saveBtn', {
+    textContent: 'Save Settings',
+    attributes: { 'data-i18n': 'settings.save' }
+  });
 
   const ipSelector = appendElement(document, body, 'div', 'ipSelector');
-  appendElement(document, ipSelector, 'h2', 'ipSelectorTitle');
-  appendElement(document, ipSelector, 'button', 'ipSelectorClose', { textContent: 'Close' });
+  appendElement(document, ipSelector, 'h2', 'ipSelectorTitle', {
+    attributes: { 'data-i18n': 'modal.ipSelector.title' }
+  });
+  appendElement(document, ipSelector, 'button', 'ipSelectorClose', {
+    textContent: 'Close',
+    attributes: { 'data-i18n-aria-label': 'modal.close' }
+  });
   appendElement(document, ipSelector, 'div', 'ip-list');
 
   const context = {
@@ -477,7 +544,8 @@ function createBrowserHarness(options = {}) {
     Event: FakeEvent,
     fetch: options.fetch || createDefaultFetch(options.devices),
     io: {
-      connect() {
+      connect(uri, connectOptions) {
+        socketConnections.push({ uri, options: connectOptions });
         return socket;
       }
     }
@@ -495,6 +563,8 @@ function createBrowserHarness(options = {}) {
   windowObject.io = context.io;
   windowObject.nextTraceUIState = require(path.join(repoRoot, 'assets/js/ui-state.js'));
   windowObject.nextTraceMTRAgg = require(path.join(repoRoot, 'assets/js/mtr-agg.js'));
+  windowObject.nextTraceI18n = require(path.join(repoRoot, 'assets/js/i18n.js'));
+  windowObject.nextTracePaths = require(path.join(repoRoot, 'assets/js/paths.js'));
 
   loadScript('assets/js/main.js', context);
   loadScript('assets/js/settingsmenu.js', context);
@@ -505,10 +575,12 @@ function createBrowserHarness(options = {}) {
     window: windowObject,
     document,
     socket,
+    socketConnections,
     localStorage,
     clipboardWrites,
     elements: {
       params,
+      uiLanguage,
       ipVersion,
       protocol,
       startBtn,
@@ -538,6 +610,12 @@ function createBrowserHarness(options = {}) {
       saveBtn: document.getElementById('saveBtn'),
       noticeBanner: document.getElementById('noticeBanner'),
       taskStatusBadge: document.getElementById('taskStatusBadge'),
+      taskStatusDetail: document.getElementById('taskStatusDetail'),
+      targetSummary: document.getElementById('targetSummary'),
+      connectionSummary: document.getElementById('connectionSummary'),
+      resultStateTitle: document.getElementById('resultStateTitle'),
+      resultStateText: document.getElementById('resultStateText'),
+      resolveModeSummary: document.getElementById('resolveModeSummary'),
       settingsSummaryInline: document.getElementById('settingsSummaryInline'),
       output,
       tbody,

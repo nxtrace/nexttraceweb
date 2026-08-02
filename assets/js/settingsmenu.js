@@ -1,3 +1,4 @@
+var pathsApi = window.nextTracePaths;
 var settingBtn = document.getElementById('settingBtn');
 var settingMenu = document.getElementById('settingMenu');
 var settingCloseBtn = document.getElementById('settingCloseBtn');
@@ -169,11 +170,11 @@ function loadStoredSettings() {
 }
 
 function loadAvailableDevices() {
-    if (!deviceOptions || typeof fetch !== 'function') {
+    if (!deviceOptions || !pathsApi || typeof fetch !== 'function') {
         return Promise.resolve();
     }
 
-    return fetch('/api/devices', {
+    return fetch(pathsApi.joinBasePath(window.location.pathname, 'api/devices'), {
         headers: { accept: 'application/json' }
     })
         .then(function (response) {

@@ -122,7 +122,7 @@ jobs:
                   "HEALTHCHECK",
               ],
               "requirements.txt": [
-                  "gevent==26.5.0",
+                  "gevent==",
                   "gunicorn",
               ],
               "nginx.conf": [

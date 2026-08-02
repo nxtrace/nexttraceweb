@@ -78,12 +78,50 @@ async function checkHarnessMirrorsTemplate() {
     'the harness drives elements the real template does not ship'
   );
 
+  const templateTagsById = new Map();
+  const openingTagPattern = /<[a-z][a-z0-9-]*\b[^>]*\bid="([^"]+)"[^>]*>/gi;
+  const i18nAttributes = [
+    'data-i18n',
+    'data-i18n-placeholder',
+    'data-i18n-aria-label',
+    'data-i18n-title'
+  ];
+  match = openingTagPattern.exec(html);
+  while (match !== null) {
+    templateTagsById.set(match[1], match[0]);
+    match = openingTagPattern.exec(html);
+  }
+
+  const contractIds = new Set([
+    ...templateTagsById.keys(),
+    ...harness.document.elementsById.keys()
+  ]);
+  contractIds.forEach((id) => {
+    const element = harness.document.elementsById.get(id);
+    const openingTag = templateTagsById.get(id);
+    i18nAttributes.forEach((attribute) => {
+      const harnessValue = element ? element.getAttribute(attribute) : undefined;
+      const attributeMatch = openingTag
+        ? openingTag.match(new RegExp(`\\b${attribute}="([^"]*)"`))
+        : null;
+      const templateValue = attributeMatch ? attributeMatch[1] : undefined;
+
+      if (harnessValue === undefined && templateValue === undefined) {
+        return;
+      }
+
+      assert.ok(element, `${id} should exist in the harness`);
+      assert.ok(openingTag, `${id} should exist in the template`);
+      assert.equal(harnessValue, templateValue, `${id} should use the same ${attribute} key`);
+    });
+  });
+
   // The language switcher is the newest of these, and its options carry behaviour the id
   // check alone cannot see.
   assert.match(html, /<select id="uiLanguage"/);
-  assert.match(html, /<option value="auto"[^>]*data-i18n="language\.auto"/);
-  assert.match(html, /<option value="en">English<\/option>/);
-  assert.match(html, /<option value="zh">中文<\/option>/);
+  assert.match(html, /<option\b(?=[^>]*\bvalue="auto")(?=[^>]*\bdata-i18n="language\.auto")[^>]*>\s*Auto\s*<\/option>/);
+  assert.match(html, /<option\b(?=[^>]*\bvalue="en")(?=[^>]*\blang="en")[^>]*>\s*English\s*<\/option>/);
+  assert.match(html, /<option\b(?=[^>]*\bvalue="zh")(?=[^>]*\blang="zh-CN")[^>]*>\s*中文\s*<\/option>/);
 }
 
 async function checkSettingsDrawerControls() {
@@ -423,10 +461,52 @@ async function checkNoticeFollowsLanguageSwitch() {
   await harness.flushPromises();
 
   assert.match(elements.noticeBanner.textContent, /Too many requests/);
+  assert.equal(elements.noticeBanner.textContent.includes('操作过于频繁'), false);
+
+  // Consecutive messages for the same code replace the previous raw detail.
+  [
+    {
+      code: 'invalid_payload',
+      message: 'maxHop 超出允许范围',
+      summary: /The server rejected one of the trace settings/
+    },
+    {
+      code: 'invalid_payload',
+      message: 'port 不是合法整数',
+      summary: /The server rejected one of the trace settings/
+    }
+  ].forEach((error) => {
+    harness.socket.trigger('nexttrace_error', error);
+    assert.match(elements.noticeBanner.textContent, error.summary);
+    assert.match(elements.noticeBanner.textContent, new RegExp(error.message));
+  });
+  assert.equal(elements.noticeBanner.textContent.includes('maxHop 超出允许范围'), false);
+
+  // Every code with parameter-specific diagnostics retains the raw detail alongside its
+  // localized summary.
+  [
+    {
+      code: 'invalid_target',
+      message: '目标地址格式不合法',
+      summary: /The server rejected the target address/
+    },
+    {
+      code: 'trace_not_running',
+      message: '任务已结束，无法继续输入',
+      summary: /There is no running trace to interact with/
+    }
+  ].forEach((error) => {
+    harness.socket.trigger('nexttrace_error', error);
+    assert.match(elements.noticeBanner.textContent, error.summary);
+    assert.match(elements.noticeBanner.textContent, new RegExp(error.message));
+  });
 
   elements.uiLanguage.value = 'zh';
   harness.dispatchChange(elements.uiLanguage);
   await harness.flushPromises();
+
+  assert.match(elements.noticeBanner.textContent, /当前没有正在运行的 trace 任务/);
+  assert.match(elements.noticeBanner.textContent, /任务已结束，无法继续输入/);
 
   // A keyed notice re-renders in whichever language is active.
   harness.socket.trigger('nexttrace_error', {});

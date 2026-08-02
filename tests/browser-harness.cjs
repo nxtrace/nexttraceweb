@@ -432,17 +432,31 @@ function createBrowserHarness(options = {}) {
     attributes: { 'data-i18n': 'action.share' }
   });
 
-  appendElement(document, traceForm, 'span', 'taskStatusBadge');
-  appendElement(document, traceForm, 'p', 'taskStatusDetail');
-  appendElement(document, traceForm, 'span', 'targetSummary');
-  appendElement(document, traceForm, 'span', 'connectionSummary');
-  appendElement(document, traceForm, 'span', 'resolveModeSummary');
+  appendElement(document, traceForm, 'span', 'taskStatusBadge', {
+    attributes: { 'data-i18n': 'state.idle.label' }
+  });
+  appendElement(document, traceForm, 'p', 'taskStatusDetail', {
+    attributes: { 'data-i18n': 'state.idle.detail' }
+  });
+  appendElement(document, traceForm, 'span', 'targetSummary', {
+    attributes: { 'data-i18n': 'target.notSet' }
+  });
+  appendElement(document, traceForm, 'span', 'connectionSummary', {
+    attributes: { 'data-i18n': 'connection.connecting' }
+  });
+  appendElement(document, traceForm, 'span', 'resolveModeSummary', {
+    attributes: { 'data-i18n': 'summary.resolve.local' }
+  });
   appendElement(document, traceForm, 'span', 'settingsSummaryInline');
 
   appendElement(document, body, 'div', 'noticeBanner', { hidden: true });
   appendElement(document, body, 'section', 'resultEmptyState', { hidden: false });
-  appendElement(document, body, 'h2', 'resultStateTitle');
-  appendElement(document, body, 'p', 'resultStateText');
+  appendElement(document, body, 'h2', 'resultStateTitle', {
+    attributes: { 'data-i18n': 'empty.idle.title' }
+  });
+  appendElement(document, body, 'p', 'resultStateText', {
+    attributes: { 'data-i18n': 'empty.idle.description' }
+  });
 
   const output = appendElement(document, body, 'table', 'output');
   const tbody = appendElement(document, output, 'tbody', '');
@@ -464,7 +478,13 @@ function createBrowserHarness(options = {}) {
     attributes: { 'aria-hidden': 'true' },
     className: 'settings-drawer'
   });
-  appendElement(document, settingMenu, 'button', 'settingCloseBtn', { textContent: 'x' });
+  appendElement(document, settingMenu, 'h2', 'settingsDrawerTitle', {
+    attributes: { 'data-i18n': 'settings.title' }
+  });
+  appendElement(document, settingMenu, 'button', 'settingCloseBtn', {
+    textContent: 'x',
+    attributes: { 'data-i18n-aria-label': 'settings.close' }
+  });
   appendElement(document, settingMenu, 'select', 'language', { value: 'cn' });
   appendElement(document, settingMenu, 'input', 'localResolveCheckbox', { type: 'checkbox', checked: true });
   appendElement(document, settingMenu, 'input', 'intervalTimeRange', { type: 'range', value: '0.040' });
@@ -477,13 +497,20 @@ function createBrowserHarness(options = {}) {
   appendElement(document, settingMenu, 'input', 'devInput', {
     type: 'text',
     value: '',
-    attributes: { list: 'deviceOptions' }
+    attributes: {
+      list: 'deviceOptions',
+      'data-i18n-placeholder': 'settings.device.placeholder'
+    }
   });
   appendElement(document, settingMenu, 'datalist', 'deviceOptions');
   appendElement(document, settingMenu, 'span', 'dev-error-message', {
     attributes: { 'data-i18n': 'settings.device.error' }
   });
-  appendElement(document, settingMenu, 'input', 'dataProvider', { type: 'text', value: '' });
+  appendElement(document, settingMenu, 'input', 'dataProvider', {
+    type: 'text',
+    value: '',
+    attributes: { 'data-i18n-placeholder': 'settings.dataProvider.placeholder' }
+  });
   appendElement(document, settingMenu, 'span', 'dp-error-message', {
     attributes: { 'data-i18n': 'settings.dataProvider.error' }
   });
@@ -493,8 +520,13 @@ function createBrowserHarness(options = {}) {
   });
 
   const ipSelector = appendElement(document, body, 'div', 'ipSelector');
-  appendElement(document, ipSelector, 'h2', 'ipSelectorTitle');
-  appendElement(document, ipSelector, 'button', 'ipSelectorClose', { textContent: 'Close' });
+  appendElement(document, ipSelector, 'h2', 'ipSelectorTitle', {
+    attributes: { 'data-i18n': 'modal.ipSelector.title' }
+  });
+  appendElement(document, ipSelector, 'button', 'ipSelectorClose', {
+    textContent: 'Close',
+    attributes: { 'data-i18n-aria-label': 'modal.close' }
+  });
   appendElement(document, ipSelector, 'div', 'ip-list');
 
   const context = {

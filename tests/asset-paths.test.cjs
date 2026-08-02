@@ -45,6 +45,20 @@ test('joinBasePath builds sub-path aware endpoints', () => {
   assert.equal(joinBasePath('/trace/', undefined), '/trace/');
 });
 
+test('documented sub-path redirects preserve query strings', () => {
+  ['README.md', 'README.zh-CN.md'].forEach((relativePath) => {
+    const readme = readRepoFile(relativePath);
+    const locationBlock = readme.match(/location = \/tools\/nexttrace\s*\{([\s\S]*?)\}/);
+
+    assert.ok(locationBlock, `${relativePath} should document the no-slash redirect`);
+    assert.match(
+      locationBlock[1],
+      /^\s*return 301 \/tools\/nexttrace\/\$is_args\$args;\s*$/m,
+      `${relativePath} should preserve the original query string`
+    );
+  });
+});
+
 test('the template references every asset with a relative path', () => {
   const html = readRepoFile('templates/index.html');
   const referencePattern = /(?:src|href)="([^"]+)"/g;

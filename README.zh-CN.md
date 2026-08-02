@@ -68,7 +68,7 @@ map $http_upgrade $connection_upgrade {
 
 # 放在 server 块中，把 https://example.com/tools/nexttrace/ 映射到容器根路径：
 location = /tools/nexttrace {
-    return 301 /tools/nexttrace/;
+    return 301 /tools/nexttrace/$is_args$args;
 }
 
 location /tools/nexttrace/ {

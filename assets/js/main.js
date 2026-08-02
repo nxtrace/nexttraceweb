@@ -25,6 +25,11 @@ var LOCALIZED_SERVER_ERROR_CODES = [
     'trace_not_running',
     'trace_rate_limited'
 ];
+var SERVER_ERROR_CODES_WITH_DETAILS = [
+    'invalid_payload',
+    'invalid_target',
+    'trace_not_running'
+];
 
 var uiState = {
     connectionStatus: 'connecting',
@@ -129,7 +134,7 @@ socket.on('nexttrace_error', function (data) {
     traceViewState.acceptUpdates = false;
     uiState.taskStatus = 'error';
     if (noticeKey !== '') {
-        setNotice(noticeKey, 'error');
+        setNotice(noticeKey, 'error', shouldShowServerErrorDetail(data) ? serverMessage : '');
     } else if (serverMessage !== '') {
         setNoticeText(serverMessage, 'error');
     } else {
@@ -371,7 +376,11 @@ function renderStatusSummary() {
 
 function renderNotice() {
     var notice = $('noticeBanner');
-    var message = uiState.noticeKey !== '' ? t(uiState.noticeKey) : uiState.noticeMessage;
+    var message = uiState.noticeKey !== '' ? t(uiState.noticeKey) : '';
+
+    if (uiState.noticeMessage !== '') {
+        message = message !== '' ? message + ' — ' + uiState.noticeMessage : uiState.noticeMessage;
+    }
 
     if (!message) {
         notice.hidden = true;
@@ -591,11 +600,11 @@ function hideSelectionModal(triggerCancel) {
     modalCancelHandler = null;
 }
 
-// Notices keep a translation key so they follow a language switch. Server-provided
-// messages have no key and are shown verbatim through setNoticeText.
-function setNotice(messageKey, tone) {
+// Notices keep a translation key so they follow a language switch. A server-provided
+// detail can be retained verbatim alongside the localized summary.
+function setNotice(messageKey, tone, detailMessage) {
     uiState.noticeKey = messageKey || '';
-    uiState.noticeMessage = '';
+    uiState.noticeMessage = detailMessage || '';
     uiState.noticeTone = tone || 'info';
     renderNotice();
 }
@@ -614,15 +623,19 @@ function clearNotice() {
     renderNotice();
 }
 
-// Codes whose server message is a fixed sentence get localized copy instead. The
-// remaining codes (nexttrace_exit_nonzero, nexttrace_invalid_args) carry nexttrace's own
-// diagnostic output in `message`, which is shown verbatim.
+// Known codes get a localized summary. Parameter-specific validation codes retain their
+// server detail; nexttrace_exit_nonzero and nexttrace_invalid_args remain verbatim.
 function getServerErrorKey(data) {
     var code = data && typeof data.code === 'string' ? data.code : '';
     if (code === '') {
         return '';
     }
     return LOCALIZED_SERVER_ERROR_CODES.indexOf(code) === -1 ? '' : 'serverError.' + code;
+}
+
+function shouldShowServerErrorDetail(data) {
+    var code = data && typeof data.code === 'string' ? data.code : '';
+    return SERVER_ERROR_CODES_WITH_DETAILS.indexOf(code) !== -1;
 }
 
 function getServerErrorMessage(data) {

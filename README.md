@@ -84,7 +84,7 @@ map $http_upgrade $connection_upgrade {
 
 # In the server block. https://example.com/tools/nexttrace/ maps to the container root:
 location = /tools/nexttrace {
-    return 301 /tools/nexttrace/;
+    return 301 /tools/nexttrace/$is_args$args;
 }
 
 location /tools/nexttrace/ {

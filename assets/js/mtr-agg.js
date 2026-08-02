@@ -7,23 +7,33 @@
         root.nextTraceMTRAgg = api;
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-    var TABLE_HEADER_HTML = [
-        '<tr>',
-        '<th>HOP</th>',
-        '<th>IP</th>',
-        '<th>ASN</th>',
-        '<th>LOCATION</th>',
-        '<th>OWNER</th>',
-        '<th>LOSS%</th>',
-        '<th>SENT</th>',
-        '<th>LAST</th>',
-        '<th>AVG</th>',
-        '<th>BEST</th>',
-        '<th>WORST</th>',
-        '<th>STDEV</th>',
-        '<th>PTR</th>',
-        '</tr>'
-    ].join('');
+    var DEFAULT_TABLE_HEADER_LABELS = [
+        'HOP',
+        'IP',
+        'ASN',
+        'LOCATION',
+        'OWNER',
+        'LOSS%',
+        'SENT',
+        'LAST',
+        'AVG',
+        'BEST',
+        'WORST',
+        'STDEV',
+        'PTR'
+    ];
+
+    function buildTableHeaderHtml(labels) {
+        var headerLabels = Array.isArray(labels) && labels.length === DEFAULT_TABLE_HEADER_LABELS.length
+            ? labels
+            : DEFAULT_TABLE_HEADER_LABELS;
+
+        return '<tr>' + headerLabels.map(function (label) {
+            return '<th>' + escapeHTML(String(label)) + '</th>';
+        }).join('') + '</tr>';
+    }
+
+    var TABLE_HEADER_HTML = buildTableHeaderHtml();
 
     function createMTRAggregator() {
         return {
@@ -177,8 +187,8 @@
         });
     }
 
-    function renderTableHtml(rows) {
-        var bodyHtml = TABLE_HEADER_HTML;
+    function renderTableHtml(rows, headerHtml) {
+        var bodyHtml = typeof headerHtml === 'string' && headerHtml !== '' ? headerHtml : TABLE_HEADER_HTML;
         (rows || []).forEach(function (row) {
             bodyHtml += renderRowHtml(row);
         });
@@ -380,6 +390,7 @@
         buildLossStyle: buildLossStyle,
         buildRenderableRows: buildRenderableRows,
         buildStdevStyle: buildStdevStyle,
+        buildTableHeaderHtml: buildTableHeaderHtml,
         cancelTraceIntent: cancelTraceIntent,
         createMTRAggregator: createMTRAggregator,
         createTraceViewState: createTraceViewState,

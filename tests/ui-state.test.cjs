@@ -8,6 +8,7 @@ const {
   deriveEmptyState,
   deriveTaskMeta,
   formatTargetSummary,
+  getConnectionStatusKey,
   loadRecentQueries,
   upsertRecentQuery,
 } = require('../assets/js/ui-state.js');
@@ -39,32 +40,54 @@ test('deriveActionState enables stop during resolving and disables start while b
   assert.equal(disconnectedState.startDisabled, true);
 });
 
-test('deriveEmptyState returns waiting copy while the trace has no rows yet', () => {
+test('deriveEmptyState returns waiting copy keys while the trace has no rows yet', () => {
   const state = deriveEmptyState('waiting', 'connected', false);
   assert.equal(state.visible, true);
-  assert.equal(state.title, 'Waiting for first hop');
+  assert.equal(state.titleKey, 'empty.waiting.title');
+  assert.equal(state.descriptionKey, 'empty.waiting.description');
 });
 
-test('deriveTaskMeta surfaces retained-results copy for completed traces', () => {
+test('deriveTaskMeta surfaces retained-results copy keys for completed traces', () => {
   const meta = deriveTaskMeta('complete', 'connected', 3);
-  assert.equal(meta.label, 'Complete');
+  assert.equal(meta.labelKey, 'state.complete.label');
   assert.equal(meta.tone, 'success');
-  assert.match(meta.detail, /retained/i);
+  assert.equal(meta.detailKey, 'state.complete.detail');
+  assert.equal(deriveTaskMeta('complete', 'connected', 0).detailKey, 'state.complete.detailEmpty');
 });
 
 test('formatTargetSummary shows resolved targets when local resolve changes the value', () => {
   assert.equal(formatTargetSummary('example.com', '1.1.1.1'), 'example.com -> 1.1.1.1');
-  assert.equal(formatTargetSummary('', ''), 'Not set');
+  assert.equal(formatTargetSummary('', ''), 'target.notSet');
+  assert.equal(formatTargetSummary('', '', () => '未设置'), '未设置');
 });
 
 test('buildSettingsSummary emits concise status chips', () => {
-  const summary = buildSettingsSummary({
+  const settings = {
     language: 'en',
     intervalSeconds: '0.04',
     packetSize: '128',
     dataProvider: 'LeoMoeAPI',
     localResolve: true
-  });
+  };
 
-  assert.deepEqual(summary, ['EN', 'Local Resolve', '40 ms', '128 B', 'LeoMoeAPI']);
+  assert.deepEqual(buildSettingsSummary(settings), [
+    'EN',
+    'summary.resolve.local',
+    '40 ms',
+    '128 B',
+    'LeoMoeAPI'
+  ]);
+  assert.deepEqual(buildSettingsSummary(settings, () => 'Local Resolve'), [
+    'EN',
+    'Local Resolve',
+    '40 ms',
+    '128 B',
+    'LeoMoeAPI'
+  ]);
+});
+
+test('getConnectionStatusKey maps every connection state to a copy key', () => {
+  assert.equal(getConnectionStatusKey('connected'), 'connection.connected');
+  assert.equal(getConnectionStatusKey('disconnected'), 'connection.disconnected');
+  assert.equal(getConnectionStatusKey('connecting'), 'connection.connecting');
 });

@@ -65,6 +65,39 @@ docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 80
 docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb [::1]:30080
 ```
 
+## Interface Language
+
+The UI ships English and Simplified Chinese. The selector in the page header defaults to **Auto**, which follows the browser's `Accept-Language` preference; pick `English` or `中文` to pin one. The choice is stored in `localStorage` under `uiLanguage`.
+
+The separate **Geo Data Language** option inside the settings drawer is unrelated — it is passed straight to `nexttrace` and controls the language of geolocation data, not the interface.
+
+## Sub-path Deployment
+
+All assets, the `/api/devices` endpoint, and the Socket.IO path are resolved relative to the page's own directory, so the app can be mounted under a sub-path. The outer proxy must **strip the prefix** (note the trailing slash on both `location` and `proxy_pass`) and redirect the prefix without a trailing slash:
+
+```nginx
+# In the http block. $connection_upgrade is not a built-in variable:
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# In the server block. https://example.com/tools/nexttrace/ maps to the container root:
+location = /tools/nexttrace {
+    return 301 /tools/nexttrace/$is_args$args;
+}
+
+location /tools/nexttrace/ {
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass http://127.0.0.1:30080/;
+}
+```
+
+Both trailing slashes matter. Drop the one on `proxy_pass` and the backend receives `/tools/nexttrace/...`, for which it has no route. The 301 covers visitors who leave the trailing slash out of the address bar: the browser resolves relative references against the parent directory, so the assets would be fetched from `/tools/assets/...` and the page would render unstyled.
+
 ## Runtime Notes
 
 - Health endpoint: `GET /healthz`

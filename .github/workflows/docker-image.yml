@@ -73,8 +73,10 @@ jobs:
 
       - name: Check browser scripts
         run: |
+          node --check assets/js/i18n.js
           node --check assets/js/main.js
           node --check assets/js/mtr-agg.js
+          node --check assets/js/paths.js
           node --check assets/js/settingsmenu.js
           node --check assets/js/ui-state.js
           node --check tests/browser-harness.cjs

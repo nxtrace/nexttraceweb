@@ -4,4 +4,4 @@ gevent==26.8.0
 gevent-websocket==0.10.1
 gunicorn==26.2.0
 packaging
-setuptools>=84.0.0
+setuptools>=84.2.0

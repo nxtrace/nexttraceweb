@@ -1,3 +1,6 @@
+control_socket_disable = True
+
+
 def _registry(worker):
     app = worker.wsgi
     return getattr(app, 'extensions', {}).get('traces') if app is not None else None

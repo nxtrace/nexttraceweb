@@ -9,6 +9,7 @@ import logging
 from flask import Flask
 from ntwa.config import env_float, env_int, env_bool, load_secret_key, parse_trusted_hosts
 from ntwa.http import register_routes
+from ntwa.public import configure_public
 
 logging.basicConfig(level=os.environ.get('NTWA_LOG_LEVEL', 'INFO').upper())
 app = Flask(__name__, static_folder='assets')
@@ -25,4 +26,5 @@ app.config.update(
     NTWA_MAX_ACTIVE_TRACES=max(1, env_int('NTWA_MAX_ACTIVE_TRACES', 64)),
     NTWA_MIN_START_INTERVAL_SECONDS=max(0, env_float('NTWA_MIN_START_INTERVAL_SECONDS', 1)),
 )
+configure_public(app.config)
 register_routes(app)

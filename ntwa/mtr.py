@@ -3,9 +3,10 @@ import math
 
 
 class Aggregator:
-    def __init__(self):
+    def __init__(self, text_limit=None):
         self.rows = {}
         self.path_end = None
+        self.text_limit = text_limit
 
     def path(self, conclusion):
         self.path_end = conclusion
@@ -23,7 +24,7 @@ class Aggregator:
         row['sent'] += 1
         for source, dest in [('host', 'ptr'), *[(k, k) for k in ('ip', 'asn', 'country', 'prov', 'city', 'district', 'owner')]]:
             if record.get(source) is not None and str(record[source]).strip():
-                row[dest] = str(record[source]).strip()
+                row[dest] = str(record[source]).strip()[:self.text_limit]
         rtt = record.get('rtt_ms', 0)
         success = record.get('success') is True and isinstance(rtt, (float, int)) and math.isfinite(rtt) and rtt >= 0
         row['lastIsTimeout'] = not success

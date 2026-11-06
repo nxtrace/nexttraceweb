@@ -56,11 +56,19 @@ render_nginx_config() {
     listen_directives="$(render_listen_directives)"
     python3 - "$listen_directives" <<'PY'
 from pathlib import Path
+import ipaddress
+import os
 import sys
 
 template = Path("/etc/nginx/nginx.conf.template").read_text()
 rendered = template.replace("__LISTEN_DIRECTIVES__", sys.argv[1])
-Path("/etc/nginx/nginx.conf").write_text(rendered)
+trusted = [str(ipaddress.ip_network(item.strip(), strict=False)) for item in os.environ.get('NTWA_TRUSTED_PROXIES', '').split(',') if item.strip()]
+rendered = rendered.replace('__TRUSTED_PROXY_DIRECTIVES__', '\n'.join('set_real_ip_from ' + network + ';' for network in trusted))
+rendered = rendered.replace('__TRUSTED_PROXY_RANGES__', '\n'.join(network + ' 1;' for network in trusted))
+public = os.environ.get('NTWA_PUBLIC_MODE', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+rendered = rendered.replace('__PUBLIC_API_LIMITS__', 'limit_req zone=api_ip burst=20 nodelay; limit_req zone=api_global burst=120 nodelay; limit_req_status 429;' if public else '')
+rendered = rendered.replace('__PUBLIC_SSE_LIMITS__', 'limit_req zone=sse_open burst=4 nodelay; limit_conn sse_ip 4; limit_conn sse_global 32; limit_req_status 429; limit_conn_status 429;' if public else '')
+Path("/tmp/ntwa-nginx.conf").write_text(rendered)
 PY
 }
 
@@ -77,7 +85,7 @@ start_processes() {
         app:app &
     GUNICORN_PID=$!
 
-    nginx -g 'daemon off;' &
+    nginx -c /tmp/ntwa-nginx.conf -g 'daemon off;' &
     NGINX_PID=$!
 }
 

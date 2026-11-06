@@ -85,6 +85,7 @@ class PayloadError(Exception):
     code: str
     message: str
     retry_after_seconds: Optional[float] = None
+    status_code: int = 400
 
 
 

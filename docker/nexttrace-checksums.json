@@ -1,0 +1,10 @@
+{
+  "v1.7.5": {
+    "nexttrace_linux_amd64": "7d7fa3bdd967494d1c051766696dea753bc6f4a1d95c2016fdfa078cf1894ff6",
+    "nexttrace_linux_arm64": "820a736c60aca52683b5a4c7fa256d7a4248db37f28f2c16ff6daf76a8b0ee87",
+    "nexttrace-tiny_linux_amd64": "4c25ab6f4000f1473ab928362e406ba0288cbdc034857eeedd83bb0e4d3ce653",
+    "nexttrace-tiny_linux_arm64": "e49e5d5cf6fa45ec4b7ac739eba674412b1e044d7502d56878c67ec8cde6c1d4",
+    "ntr_linux_amd64": "76004aefe42a10ccf10c113835031414e83760d32a06850deea1e977259f88ae",
+    "ntr_linux_arm64": "499eb48f09a2905c33ec2615f9ba182f407ad3508023ccdba5d1cb234855ca74"
+  }
+}

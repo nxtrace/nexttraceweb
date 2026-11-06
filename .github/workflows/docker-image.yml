@@ -206,13 +206,26 @@ jobs:
 
       - name: Start container
         run: |
-          cid="$(docker run -d -p 30080:30080 nexttraceweb:smoke)"
+          python - <<'PY'
+          import os, secrets
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'ntwa-smoke.env'
+          path.write_text('NTWA_PUBLIC_MODE=true\nNTWA_SECRET_KEY=' + secrets.token_hex(32) + '\nNTWA_TRUSTED_HOSTS=127.0.0.1,localhost\nNTWA_SESSION_COOKIE_SECURE=false\n')
+          path.chmod(0o600)
+          PY
+          cid="$(docker run -d --network none --cap-drop ALL --cap-add NET_RAW \
+            --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+            --memory 512m --cpus 1 --pids-limit 128 --ulimit nofile=1024:1024 \
+            --env-file "$RUNNER_TEMP/ntwa-smoke.env" nexttraceweb:smoke)"
           echo "CONTAINER_ID=${cid}" >> "$GITHUB_ENV"
+          # Keep every probe inside this isolated network namespace.
+          pid="$(docker inspect --format '{{.State.Pid}}' "$cid")"
+          sudo nsenter -t "$pid" -n ip route add default dev lo
 
       - name: Wait for healthz
         run: |
           for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:30080/healthz >/dev/null; then
+            if docker exec "$CONTAINER_ID" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:30080/healthz',timeout=2).close()"; then
               exit 0
             fi
             sleep 2
@@ -220,29 +233,17 @@ jobs:
           docker logs "$CONTAINER_ID"
           exit 1
 
-      - name: Verify task SSE
+      - name: Verify public container isolation and task lifecycle
         run: |
-          python - <<'PY'
-          import http.cookiejar, json, urllib.request
-          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-          base = 'http://127.0.0.1:30080'
-          client.open(base + '/').close()
-          def post(path, payload):
-              req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json'})
-              return json.load(client.open(req, timeout=10))
-          task = post('/api/traces', {'ip':'127.0.0.1','request_id':'ci-smoke','extra':{'maxHop':1,'dataProvider':'disable-geoip','intervalSeconds':1}})
-          path = '/api/traces/' + task['task_id']
-          with client.open(base + path + '/events', timeout=10) as stream:
-              assert stream.headers.get_content_type() == 'text/event-stream'
-              assert stream.readline().startswith(b'event: snapshot')
-          post(path + '/stop', {})
-          PY
+          docker exec -i "$CONTAINER_ID" python - < tests/container_acceptance.py
+          if docker logs "$CONTAINER_ID" 2>&1 | grep -E 'Control server error|Read-only file system|Permission denied'; then
+            exit 1
+          fi
 
-      - name: Verify container exits when gunicorn dies
+      - name: Verify shutdown with an open SSE request
         run: |
-          gunicorn_pid="$(docker exec "$CONTAINER_ID" pgrep -f 'gunicorn.*app:app' | head -n1)"
-          docker exec "$CONTAINER_ID" kill -TERM "$gunicorn_pid"
-          timeout 20s docker wait "$CONTAINER_ID"
+          pid="$(docker inspect --format '{{.State.Pid}}' "$CONTAINER_ID")"
+          sudo nsenter -t "$pid" -n python3 tests/container_shutdown.py "$CONTAINER_ID"
 
       - name: Dump logs on failure
         if: failure()
@@ -250,7 +251,9 @@ jobs:
 
       - name: Cleanup container
         if: always()
-        run: docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+        run: |
+          docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/ntwa-smoke.env"
 
   docker-buildx-check:
     runs-on: ubuntu-latest

@@ -34,20 +34,20 @@ Inspired by PING.PE
 推荐使用Docker安装
 ```bash
 docker pull tsosc/nexttraceweb
-docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
+docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
 # 使用 http://127.0.0.1:30080 访问
 ```
 若要使用其他地址和端口，请在docker run时加入参数
 ```bash
-docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
+docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
 # 监听127.0.0.1:30080
-docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb 80
-# 监听所有IP的80端口
-docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb [::1]:30080
+docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 8080
+# 监听所有IP的8080端口
+docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb [::1]:30080
 # 监听[::1]:30080
 ```
 
-建议不要直接把服务裸露在公网，认证和访问控制请放在外层反代或网关上处理。
+公开部署请启用下文的公开模式并使用 HTTPS 反代；受限访问可在外层网关配置认证。
 
 ## 界面语言
 
@@ -57,15 +57,9 @@ docker run --network host -d --privileged --name ntwa tsosc/nexttraceweb [::1]:3
 
 ## 二级路径部署
 
-静态资源、`/api/devices` 接口以及 Socket.IO 的路径都基于当前页面所在目录做相对解析，因此可以部署在二级路径下。外层反代需要**剥离路径前缀**（注意 `location` 和 `proxy_pass` 都要带结尾斜杠），并为不带结尾斜杠的地址加上跳转：
+静态资源、`/api/devices` 接口以及任务 HTTP/SSE 的路径都基于当前页面所在目录做相对解析，因此可以部署在二级路径下。外层反代需要**剥离路径前缀**（注意 `location` 和 `proxy_pass` 都要带结尾斜杠），并为不带结尾斜杠的地址加上跳转：
 
 ```nginx
-# 放在 http 块中，$connection_upgrade 不是 nginx 内置变量：
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    ''      close;
-}
-
 # 放在 server 块中，把 https://example.com/tools/nexttrace/ 映射到容器根路径：
 location = /tools/nexttrace {
     return 301 /tools/nexttrace/$is_args$args;
@@ -74,8 +68,8 @@ location = /tools/nexttrace {
 location /tools/nexttrace/ {
     proxy_http_version 1.1;
     proxy_set_header Host $http_host;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_buffering off;
     proxy_pass http://127.0.0.1:30080/;
 }
@@ -101,6 +95,50 @@ location /tools/nexttrace/ {
 
 生产环境请显式配置 `NTWA_SECRET_KEY`。如果不配置，应用会生成临时随机值并打印告警。
 
+## 公开 Looking Glass
+
+设置 `NTWA_PUBLIC_MODE=true` 开启服务端公开策略，默认关闭。页面样式不变；普通模式继续支持原有参数和已保存的 40ms 间隔。公开模式对超限参数明确报错，不会静默修改用户请求。
+
+| 限制 | 公开模式 |
+| --- | --- |
+| 目标 | 仅公网单播；拒绝本机、内网、特殊及 IPv6 过渡地址 |
+| 任务 | 全局最多 4 个，每会话和每 IPv4／IPv6 `/64` 最多 1 个 |
+| 时长 | 最长 120 秒；原有 30 秒失联回收继续生效 |
+| 探测 | 同一跳间隔至少 1 秒，最多 30 跳，包大小最多 512 字节 |
+| 总预算 | 按 TTL 范围与间隔计算，最多预留 120 次探测／秒；不是出口整形 |
+| 创建 | 每客户端和每目标每 10 秒补充一次，允许突发 2 次；保留请求去重 |
+| SSE | 每任务 2 个、每客户端 4 个、全局 32 个订阅；重连不创建新任务 |
+| 解析 | 每客户端 1 个、全局 4 个并发；结果最多 16 个地址 |
+| 数据 | 请求最多 8 KiB；终态保留 5 分钟且最多 256 条；输出有长度上限 |
+
+以下变量为管理员配置，客户端不能覆盖：
+
+- `NTWA_SECRET_KEY`：至少 32 字符的随机密钥，例如使用 `openssl rand -hex 32` 生成；公开模式缺失时拒绝启动。
+- `NTWA_TRUSTED_HOSTS`：允许的域名，逗号分隔；公开模式必须配置。
+- `NTWA_SESSION_COOKIE_SECURE`：公开模式默认 `true`，需由外层代理提供 HTTPS；仅本地 HTTP 测试可显式设为 `false`。
+- `NTWA_TRUSTED_PROXIES`：外层反代的准确 IP/CIDR，默认不信任外部代理头。同机反代可设置 `127.0.0.1/32,::1/128`。反代必须覆盖 `X-Forwarded-For`、`X-Forwarded-Proto`，见上面的二级路径示例；不要信任任意来源。
+- `NTWA_PUBLIC_DENY_CIDRS`：额外禁止的管理网段或公网地址，逗号分隔。目标限制不影响结果中内网中间跳点的显示。
+- `NTWA_PUBLIC_DEVICE`：固定出口网卡，默认使用系统路由；公开接口不再枚举主机网卡。
+- `NTWA_PUBLIC_TCP_PORTS`：默认 `80,443`；`NTWA_PUBLIC_UDP_PORTS`：默认 `80,443,33494`。缺省使用列表第一项；ICMP 忽略页面端口字段。
+
+已有全局并发、最大时长配置可以进一步收紧公开限制。保持单 Gunicorn worker；内存配额不适用于多个独立实例共享限额的场景。公开健康检查仅返回健康状态，原生错误详情不向访客披露，子进程只继承必要运行环境。
+
+镜像以非 root 用户运行，只有 NextTrace 文件具备 `NET_RAW` 能力。默认固定 v1.7.5 并校验仓库内的 SHA256；自定义版本使用 GitHub 发布摘要或显式传入构建参数 `NEXTTRACE_SHA256`，缺失或不匹配则构建失败。
+
+准备仅管理员可读的 `.env.public` 后，在专用探测节点运行：
+
+```bash
+docker run -d --name ntwa --network host \
+  --cap-drop ALL --cap-add NET_RAW \
+  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+  --memory 512m --cpus 1 --pids-limit 128 \
+  --ulimit nofile=1024:1024 \
+  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+  --env-file .env.public tsosc/nexttraceweb 127.0.0.1:30080
+```
+
+外层 HTTPS 代理需关闭 SSE 缓冲，读超时至少 25 秒。不要使用 `--privileged`；文件能力需要允许 NextTrace 获得 `NET_RAW`，不能同时开启会阻止该能力的 `no-new-privileges`。host 网络保留探测路由语义，隔离依赖专用节点及管理员配置的出口防火墙；IPv4/IPv6 均需阻止访问管理和本机网络，并保留 DNS、地理数据查询及 ICMP 回包所需流量。应用配额不能代替上游 DDoS 防护。
+
 ## 外层鉴权示例
 
 下面是一个最小 Nginx Basic Auth 反代示例：
@@ -116,8 +154,8 @@ server {
     location / {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_pass http://127.0.0.1:30080;
     }

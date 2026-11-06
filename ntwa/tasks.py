@@ -9,6 +9,7 @@ import uuid
 from nexttrace_mtr import build_mtr_json_command, build_process_env
 from .mtr import Aggregator
 from .config import PayloadError
+from .limits import Limits
 
 TERMINAL = {'completed', 'cancelled', 'failed'}
 
@@ -18,11 +19,13 @@ class Task:
         self.id = uuid.uuid4().hex
         self.owner = owner
         self.params = params
+        self.client = None
+        self.probe_rate = 0
         self.config = config
         self.condition = threading.Condition(threading.RLock())
         self.state = 'starting'
         self.seq = 1
-        self.aggregate = Aggregator()
+        self.aggregate = Aggregator(text_limit=512 if config.get('NTWA_PUBLIC_MODE') else None)
         self.error = None
         self.process = None
         self.created_at = self.last_output_at = self.lease_at = time.monotonic()
@@ -33,7 +36,10 @@ class Task:
 
     def snapshot(self):
         with self.condition:
-            return dict(task_id=self.id, target=self.params[0], seq=self.seq, state=self.state, rows=self.aggregate.snapshot(), path_end=self.aggregate.path_end, error=self.error)
+            error = self.error
+            if self.config.get('NTWA_PUBLIC_MODE') and error and error.get('code') == 'nexttrace_error':
+                error = dict(code='nexttrace_error', message='探测失败')
+            return dict(task_id=self.id, target=self.params[0], seq=self.seq, state=self.state, rows=self.aggregate.snapshot(), path_end=self.aggregate.path_end, error=error)
 
     def change(self, state=None, error=None):
         with self.condition:
@@ -101,7 +107,7 @@ class Task:
 
     def consume_stderr(self, process):
         try:
-            for line in process.stderr:
+            for line in iter(lambda: process.stderr.readline(4097), ''):
                 if line.strip():
                     self.stderr = line.strip()[-2000:]
         except (OSError, ValueError):
@@ -118,10 +124,12 @@ class Task:
                 if self.stopping.is_set():
                     self.change('cancelled')
                     return
-                process = self.process = subprocess.Popen(build_mtr_json_command(self.config['NTWA_NEXTTRACE_PATH'], self.params, self.config.get('NTWA_NEXTTRACE_FLAVOR', 'nexttrace')), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, bufsize=1, env=build_process_env(os.environ))
+                process = self.process = subprocess.Popen(build_mtr_json_command(self.config['NTWA_NEXTTRACE_PATH'], self.params, self.config.get('NTWA_NEXTTRACE_FLAVOR', 'nexttrace')), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, bufsize=1, env=build_process_env(os.environ, public=self.config.get('NTWA_PUBLIC_MODE', False)))
             stderr_thread = threading.Thread(target=self.consume_stderr, args=(process,), daemon=True)
             stderr_thread.start()
-            for line in process.stdout:
+            for line in iter(lambda: process.stdout.readline(65537), ''):
+                if len(line) > 65536:
+                    raise ValueError('MTR JSON event exceeds size limit')
                 if not line.strip():
                     continue
                 self.last_output_at = time.monotonic()
@@ -138,10 +146,22 @@ class Task:
                     elif not started:
                         raise ValueError('Missing MTR start event')
                     elif kind == 'probe':
+                        if self.config.get('NTWA_PUBLIC_MODE'):
+                            ttl = event['record'].get('ttl')
+                            first = int(self.params[self.params.index('--first') + 1])
+                            maximum = int(self.params[self.params.index('--max-hops') + 1])
+                            if not isinstance(ttl, int) or not first <= ttl <= maximum:
+                                raise ValueError('MTR probe TTL exceeds configured range')
                         self.aggregate.ingest(event['record'])
                         self.change()
                     elif kind == 'path_end':
-                        self.aggregate.path(event['path_end'])
+                        conclusion = event['path_end']
+                        if self.config.get('NTWA_PUBLIC_MODE') and conclusion is not None:
+                            hop = conclusion.get('hop')
+                            if not isinstance(hop, int) or not 1 <= hop <= 255:
+                                raise ValueError('Invalid MTR path conclusion')
+                            conclusion = dict(reason=str(conclusion.get('reason', ''))[:64], hop=hop)
+                        self.aggregate.path(conclusion)
                         self.change()
                     elif kind == 'end':
                         end = event
@@ -179,14 +199,19 @@ class Task:
                 elif self.stopping.is_set():
                     self.change('cancelled')
                 elif failure:
-                    self.change('failed', dict(code='nexttrace_error', **failure))
+                    details = failure if isinstance(failure, dict) else dict(message=str(failure)[:2000])
+                    self.change('failed', dict(details, code='nexttrace_error'))
                 else:
                     self.change('completed')
+            if self.config.get('NTWA_PUBLIC_MODE'):
+                logging.info('public_trace_finished state=%s reaped=%s', self.state, process is None or process.poll() is not None)
 
 
 class Registry:
-    def __init__(self, config):
+    def __init__(self, config, public=None):
         self.config = config
+        self.public = public
+        self.limits = Limits()
         self.lock = threading.RLock()
         self.tasks = {}
         self.requests = {}
@@ -195,13 +220,20 @@ class Registry:
 
     def prune(self):
         now = time.monotonic()
+        expired = set()
         for key, task in list(self.tasks.items()):
             if task.finished_at is not None and now - task.finished_at > 300:
-                del self.tasks[key]
+                expired.add(key)
+        if self.public:
+            # A count cap complements TTL retention; never evict active tasks.
+            terminal = sorted((task for task in self.tasks.values() if task.finished_at is not None and task.id not in expired), key=lambda task: task.finished_at)
+            expired.update(task.id for task in terminal[:-256])
+        for key in expired:
+            del self.tasks[key]
         self.requests = {key: task for key, task in self.requests.items() if task.id in self.tasks}
         self.last_start = {owner: at for owner, at in self.last_start.items() if now - at < 300}
 
-    def create(self, owner, request_id, params):
+    def create(self, owner, request_id, params, client=None):
         with self.lock:
             if self.closed:
                 raise PayloadError('start_failed', '服务正在停止')
@@ -216,9 +248,13 @@ class Registry:
             remaining = self.config['NTWA_MIN_START_INTERVAL_SECONDS'] - (now - self.last_start.get(owner, float('-inf')))
             if remaining > 0:
                 raise PayloadError('trace_rate_limited', '操作过于频繁', remaining)
-            if sum(task.state not in TERMINAL for task in self.tasks.values()) >= self.config['NTWA_MAX_ACTIVE_TRACES']:
+            active = [task for task in self.tasks.values() if task.state not in TERMINAL]
+            if len(active) >= self.config['NTWA_MAX_ACTIVE_TRACES']:
                 raise PayloadError('trace_capacity_exceeded', '当前任务已满', 1)
+            rate = self.public.admit(self, owner, client, params, active) if self.public else 0
             task = Task(owner, params, self.config)
+            task.client = client
+            task.probe_rate = rate
             self.tasks[task.id] = self.requests[key] = task
             self.last_start[owner] = now
             try:

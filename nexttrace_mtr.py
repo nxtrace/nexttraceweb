@@ -11,7 +11,12 @@ def build_mtr_json_command(nexttrace_path, params, flavor='nexttrace'):
     return [nexttrace_path, *params, *mode, '--json']
 
 
-def build_process_env(source_env):
-    env = dict(source_env)
-    env.pop('NEXTTRACE_UNINTERRUPTED', None)
-    return env
+def build_process_env(source_env, public=False):
+    if not public:
+        env = dict(source_env)
+        env.pop('NEXTTRACE_UNINTERRUPTED', None)
+        return env
+    # Probes need runtime/GeoIP configuration, never Flask secrets or proxy credentials.
+    runtime = {'PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'}
+    nexttrace = {'NEXTTRACE_HOSTPORT', 'NEXTTRACE_POWPROVIDER', 'NEXTTRACE_DATAPROVIDER', 'NEXTTRACE_TOKEN', 'NEXTTRACE_API_V4_TOKEN'}
+    return {key: value for key, value in source_env.items() if key in runtime or key in nexttrace}

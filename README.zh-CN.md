@@ -1,66 +1,109 @@
-<div align="center">
+# NextTrace Web
 
-<img src="https://github.com/nxtrace/NTrace-core/raw/main/assets/logo.png" height="200px" alt="NextTrace Logo"/>
+[English](README.md) | **简体中文**
 
-</div>
+[![CI](https://github.com/nxtrace/nexttraceweb/actions/workflows/docker-image.yml/badge.svg)](https://github.com/nxtrace/nexttraceweb/actions/workflows/docker-image.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/tsosc/nexttraceweb)](https://hub.docker.com/r/tsosc/nexttraceweb)
+[![GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
-# NEXTTRACE WEB
+在浏览器中运行持续路由探测，可用于自用诊断或公开 Looking Glass。基于 [NextTrace](https://github.com/nxtrace/NTrace-core)，界面设计受 [PING.PE](https://ping.pe) 启发。
 
-<div align="center">
+![当前版本的中文追踪结果](docs/images/trace-zh.jpg)
 
-**中文** | [English](README.md)
+<details>
+<summary>查看设置面板</summary>
 
-</div>
+![当前版本的中文设置面板](docs/images/settings-zh.jpg)
 
-NEXTTRACE项目派生的仓库，用于实现简易的NEXTTRACE WEB API服务端
+</details>
 
-<img width="1440" alt="截屏2023-06-12 00 24 06" src="https://github.com/tsosunchia/nexttracewebapi/assets/59512455/798554e2-190e-4425-9527-3a11708dafd8">
-<p align="center">
-  <img width="443" alt="截屏2023-06-12 00 12 57" src="https://github.com/tsosunchia/nexttracewebapi/assets/59512455/1eb4b6ce-3ed9-4728-be85-fbdabc5803bd">
-  <img width="721" alt="截屏2023-06-12 00 26 22" src="https://github.com/tsosunchia/nexttracewebapi/assets/59512455/a0563bfc-37a8-417a-89bf-3ab87ef44d6d">
-</p>
+## 功能
 
+- IPv4 / IPv6，支持 ICMP、TCP、UDP；可输入 IP、域名或 URL，并选择解析结果。
+- 按跳显示 IP、ASN、位置、归属、丢包、发送量、最新／平均／最优／最差延迟、标准差及 PTR。
+- HTTP 控制任务，SSE 推送统计；刷新和短暂断线可续接同一进程，停止后保留结果。
+- 英文和简体中文界面；界面语言与地理数据语言独立，最近查询和偏好保存在浏览器中。
+- 可选公开模式，在服务端限制目标、并发、探测参数、运行时长和连接数。
 
+## 快速启动
 
+推荐在 Linux 上使用 Docker Engine，镜像支持 `linux/amd64` 和 `linux/arm64`。以下配置仅监听本机，适合先验证功能。
 
-任务控制使用 HTTP，结果使用 SSE。反代需关闭缓冲（`proxy_buffering off`）；Docker 镜像已内置该配置。
-
-Inspired by PING.PE
-
-感谢PING.PE这么多年来的坚持，让我们能够在这个时候有一个这么好的项目可以参考
-
-## How To Use
-
-推荐使用Docker安装
 ```bash
-docker pull tsosc/nexttraceweb
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
-# 使用 http://127.0.0.1:30080 访问
-```
-若要使用其他地址和端口，请在docker run时加入参数
-```bash
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
-# 监听127.0.0.1:30080
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 8080
-# 监听所有IP的8080端口
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb [::1]:30080
-# 监听[::1]:30080
+umask 077
+printf 'NTWA_SECRET_KEY=%s\n' "$(openssl rand -hex 32)" > .env
+
+docker pull tsosc/nexttraceweb:latest
+docker run -d --name ntwa --restart unless-stopped \
+  --network host --cap-drop ALL --cap-add NET_RAW \
+  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+  --memory 512m --cpus 1 --pids-limit 128 \
+  --ulimit nofile=1024:1024 \
+  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+  --env-file .env tsosc/nexttraceweb:latest 127.0.0.1:30080
 ```
 
-公开部署请启用下文的公开模式并使用 HTTPS 反代；受限访问可在外层网关配置认证。
+打开 <http://127.0.0.1:30080/>。远程机器可使用 SSH 转发：`ssh -L 30080:127.0.0.1:30080 user@server`。
 
-## 界面语言
+镜像以 UID `10001` 运行，只有 NextTrace 可执行文件持有 `NET_RAW`。不需要 `--privileged` 或 `NET_ADMIN`；不要添加会阻止文件能力生效的 `no-new-privileges`。host 网络用于保留探测节点的实际路由。
 
-界面已支持英文和简体中文。页头的语言选择器默认为 **跟随系统**，即按浏览器的 `Accept-Language` 自动选择；也可以固定为 `English` 或 `中文`。选择结果保存在 `localStorage` 的 `uiLanguage` 中。
+镜像后的参数决定监听地址：`127.0.0.1:30080` 仅本机，`30080` 监听所有 IPv4 / IPv6 地址，`'[::1]:30080'` 仅 IPv6 本机。使用非特权端口；默认健康检查访问 `30080`，更换端口时需同步覆盖健康检查命令。
 
-设置抽屉里的 **地理数据语言** 是另一回事——它会直接传给 `nexttrace`，只影响地理位置数据的语言，不影响界面语言。
+## 公开 Looking Glass
 
-## 二级路径部署
+公开模式默认关闭。对匿名访客开放时，先配置域名和 HTTPS 反代，再使用下面的 `.env` 执行上方启动命令。已有容器需要重新创建才能加载新环境变量。
 
-静态资源、`/api/devices` 接口以及任务 HTTP/SSE 的路径都基于当前页面所在目录做相对解析，因此可以部署在二级路径下。外层反代需要**剥离路径前缀**（注意 `location` 和 `proxy_pass` 都要带结尾斜杠），并为不带结尾斜杠的地址加上跳转：
+```bash
+umask 077
+cat > .env <<EOF
+NTWA_PUBLIC_MODE=true
+NTWA_SECRET_KEY=$(openssl rand -hex 32)
+NTWA_TRUSTED_HOSTS=trace.example.com,127.0.0.1,localhost
+NTWA_SESSION_COOKIE_SECURE=true
+NTWA_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+EOF
+```
+
+把 `trace.example.com` 替换为实际域名。代理网段示例适用于同机反代；其他拓扑需填写真实代理的准确 IP/CIDR。`127.0.0.1` 用于容器健康检查。密钥应保持固定，至少 32 字符，不要提交到仓库。
+
+| 项目 | 公开模式限制 |
+| --- | --- |
+| 目标 | 仅公网单播，拒绝本机、内网、特殊及部分 IPv6 过渡地址；中间跳点正常显示 |
+| 任务 | 全局最多 4 个，每会话及每 IPv4 / IPv6 `/64` 最多 1 个 |
+| 时长 | 最长 120 秒；连续 30 秒未续租则停止 |
+| 参数 | 同一跳发送间隔至少 1 秒，最多 30 跳，包大小最多 512 字节 |
+| 探测预算 | 按跳数范围与间隔计算，合计最多预留 120 次／秒，不等同于出口整形 |
+| 创建频率 | 每客户端和每目标每 10 秒补充 1 次额度，允许突发 2 次；相同请求重试不重复启动 |
+| SSE | 每任务 2 个、每客户端 4 个、全局 32 个订阅 |
+| 解析 | 每客户端 1 个、全局 4 个并发，最多 16 个候选地址 |
+| 数据 | 请求最多 8 KiB；终态记录按 5 分钟及 256 条上限清理，输出长度受限 |
+
+超限设置会被拒绝，浏览器保存的旧设置同样受限；例如旧的 `40ms` 间隔需改为至少 `1s`。公开模式的健康检查只返回状态，网卡接口只返回管理员固定的网卡，原生错误详情不向访客披露。
+
+### HTTPS 反代
+
+在已配置证书的 Nginx HTTPS `server` 中加入：
 
 ```nginx
-# 放在 server 块中，把 https://example.com/tools/nexttrace/ 映射到容器根路径：
+location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 60s;
+    proxy_pass http://127.0.0.1:30080;
+}
+```
+
+覆盖转发头，并只信任配置过的代理。SSE 不使用 WebSocket，不需要 `Upgrade`。服务端每 10 秒发送空闲保活，外层读超时应至少 25 秒。自用服务如需登录，可在外层添加 Basic Auth 等鉴权。
+
+### 二级路径
+
+挂载在 `/tools/nexttrace/` 时，用下面两段替换上方的 `location /`。反代必须剥离前缀，两个结尾斜杠都要保留；跳转也需保留查询参数。
+
+```nginx
 location = /tools/nexttrace {
     return 301 /tools/nexttrace/$is_args$args;
 }
@@ -70,100 +113,95 @@ location /tools/nexttrace/ {
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
     proxy_buffering off;
+    proxy_read_timeout 60s;
     proxy_pass http://127.0.0.1:30080/;
 }
 ```
 
-两处结尾斜杠都很关键。漏掉 `proxy_pass` 上的那个，后端就会收到 `/tools/nexttrace/...`，没有对应路由。那条 301 用于兜住地址栏里漏掉结尾斜杠的用户：此时浏览器会把相对引用解析到上一级目录，资源会被请求到 `/tools/assets/...`，页面会失去样式。
+建议使用专用探测节点，并为 IPv4 / IPv6 配置出口规则，隔离本机和管理网络。位于 NAT 后的节点应把自身公网地址加入禁止列表；应用限额不能替代上游 DDoS 防护。
 
-## 运行时说明
+## 配置参考
 
-- 健康检查接口：`GET /healthz`
-- 容器现在会在 `gunicorn` 或 `nginx` 任一核心进程退出时整体退出，便于外部 supervisor 正常拉起，而不是留下“容器还活着、服务已经死了”的假活状态。
-- `nexttrace_error` 现在是结构化载荷，至少包含 `code` 和 `message`；限流/容量拒绝还会带 `retry_after_seconds`。
+环境变量在启动时加载；修改 `.env` 后需重新创建容器。
 
-## 安全相关环境变量
-
-- `NTWA_SECRET_KEY`
-- `NTWA_TRUSTED_HOSTS`
-- `NTWA_SESSION_COOKIE_SECURE`
-- `NTWA_MIN_START_INTERVAL_SECONDS`
-- `NTWA_MAX_ACTIVE_TRACES`
-- `NTWA_TRACE_IDLE_TIMEOUT_SECONDS`
-- `NTWA_TRACE_MAX_DURATION_SECONDS`
-
-生产环境请显式配置 `NTWA_SECRET_KEY`。如果不配置，应用会生成临时随机值并打印告警。
-
-## 公开 Looking Glass
-
-设置 `NTWA_PUBLIC_MODE=true` 开启服务端公开策略，默认关闭。页面样式不变；普通模式继续支持原有参数和已保存的 40ms 间隔。公开模式对超限参数明确报错，不会静默修改用户请求。
-
-| 限制 | 公开模式 |
+| 变量 | 默认值 / 用途 |
 | --- | --- |
-| 目标 | 仅公网单播；拒绝本机、内网、特殊及 IPv6 过渡地址 |
-| 任务 | 全局最多 4 个，每会话和每 IPv4／IPv6 `/64` 最多 1 个 |
-| 时长 | 最长 120 秒；原有 30 秒失联回收继续生效 |
-| 探测 | 同一跳间隔至少 1 秒，最多 30 跳，包大小最多 512 字节 |
-| 总预算 | 按 TTL 范围与间隔计算，最多预留 120 次探测／秒；不是出口整形 |
-| 创建 | 每客户端和每目标每 10 秒补充一次，允许突发 2 次；保留请求去重 |
-| SSE | 每任务 2 个、每客户端 4 个、全局 32 个订阅；重连不创建新任务 |
-| 解析 | 每客户端 1 个、全局 4 个并发；结果最多 16 个地址 |
-| 数据 | 请求最多 8 KiB；终态保留 5 分钟且最多 256 条；输出有长度上限 |
+| `NTWA_PUBLIC_MODE` | `false`；启用公开模式 |
+| `NTWA_SECRET_KEY` | 普通模式缺失时临时生成；公开模式必须显式提供至少 32 字符 |
+| `NTWA_TRUSTED_HOSTS` | 普通模式为空；公开模式必填，域名或 IP 以逗号分隔 |
+| `NTWA_SESSION_COOKIE_SECURE` | 普通模式 `false`，公开模式 `true`；仅本地 HTTP 测试时显式关闭 |
+| `NTWA_TRUSTED_PROXIES` | 外层可信代理 IP/CIDR，默认无；逗号分隔 |
+| `NTWA_MAX_ACTIVE_TRACES` | 普通模式 `64`；公开模式上限 `4`，可进一步收紧 |
+| `NTWA_MIN_START_INTERVAL_SECONDS` | 同一会话创建冷却 `1` 秒；公开模式至少 `2` 秒 |
+| `NTWA_TRACE_MAX_DURATION_SECONDS` | 普通模式 `0` 表示不限；公开模式最多 `120` 秒，可进一步收紧 |
+| `NTWA_TRACE_IDLE_TIMEOUT_SECONDS` | 无原生输出超时 `120` 秒；`0` 关闭此检查 |
+| `NTWA_PUBLIC_DENY_CIDRS` | 额外禁止的目标 IP/CIDR，默认空；逗号分隔 |
+| `NTWA_PUBLIC_DEVICE` | 固定探测网卡；默认使用系统路由，访客不能改选其他网卡 |
+| `NTWA_PUBLIC_TCP_PORTS` | `80,443`；缺省使用第一项 |
+| `NTWA_PUBLIC_UDP_PORTS` | `80,443,33494`；缺省使用第一项；ICMP 忽略端口 |
+| `NTWA_NEXTTRACE_PATH` | `/usr/local/bin/nexttrace` |
+| `NTWA_NEXTTRACE_FLAVOR` | 源码运行默认 `nexttrace`；默认 Docker 镜像为 `ntr` |
+| `NTWA_LOG_LEVEL` | `INFO` |
 
-以下变量为管理员配置，客户端不能覆盖：
+普通模式保留原有参数范围与已保存的间隔。界面默认间隔为 1 秒，表示**同一跳两次发送的间隔**，各跳独立推进，不是所有探针共用的全局发送间隔。
 
-- `NTWA_SECRET_KEY`：至少 32 字符的随机密钥，例如使用 `openssl rand -hex 32` 生成；公开模式缺失时拒绝启动。
-- `NTWA_TRUSTED_HOSTS`：允许的域名，逗号分隔；公开模式必须配置。
-- `NTWA_SESSION_COOKIE_SECURE`：公开模式默认 `true`，需由外层代理提供 HTTPS；仅本地 HTTP 测试可显式设为 `false`。
-- `NTWA_TRUSTED_PROXIES`：外层反代的准确 IP/CIDR，默认不信任外部代理头。同机反代可设置 `127.0.0.1/32,::1/128`。反代必须覆盖 `X-Forwarded-For`、`X-Forwarded-Proto`，见上面的二级路径示例；不要信任任意来源。
-- `NTWA_PUBLIC_DENY_CIDRS`：额外禁止的管理网段或公网地址，逗号分隔。目标限制不影响结果中内网中间跳点的显示。
-- `NTWA_PUBLIC_DEVICE`：固定出口网卡，默认使用系统路由；公开接口不再枚举主机网卡。
-- `NTWA_PUBLIC_TCP_PORTS`：默认 `80,443`；`NTWA_PUBLIC_UDP_PORTS`：默认 `80,443,33494`。缺省使用列表第一项；ICMP 忽略页面端口字段。
+## 使用与运行
 
-已有全局并发、最大时长配置可以进一步收紧公开限制。保持单 Gunicorn worker；内存配额不适用于多个独立实例共享限额的场景。公开健康检查仅返回健康状态，原生错误详情不向访客披露，子进程只继承必要运行环境。
-
-镜像以非 root 用户运行，只有 NextTrace 文件具备 `NET_RAW` 能力。默认固定 v1.7.5 并校验仓库内的 SHA256；自定义版本使用 GitHub 发布摘要或显式传入构建参数 `NEXTTRACE_SHA256`，缺失或不匹配则构建失败。
-
-准备仅管理员可读的 `.env.public` 后，在专用探测节点运行：
+- **刷新与断线：** 页面每 10 秒续租，30 秒内恢复可继续原任务。任务 ID 保存在 `sessionStorage`，所属会话由 Cookie 校验。
+- **停止与重置：** 停止保留已接收结果，重置清空当前结果和目标。分享链接只携带目标，不包含结果快照。
+- **语言与解析：** 界面可自动跟随浏览器语言，地理数据语言单独设置；支持浏览器 DoH 和服务端解析。
+- **状态：** 使用一个 Gunicorn gevent worker，任务及去重记录在内存中；服务重启后不恢复旧任务，多实例不共享配额。
+- **进程：** 停止先发送 SIGTERM，2 秒后仍未退出则强制回收；Gunicorn 或 Nginx 退出会带动容器退出。
 
 ```bash
-docker run -d --name ntwa --network host \
-  --cap-drop ALL --cap-add NET_RAW \
-  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
-  --memory 512m --cpus 1 --pids-limit 128 \
-  --ulimit nofile=1024:1024 \
-  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
-  --env-file .env.public tsosc/nexttraceweb 127.0.0.1:30080
+curl -fsS http://127.0.0.1:30080/healthz
+docker logs --tail 100 ntwa
 ```
 
-外层 HTTPS 代理需关闭 SSE 缓冲，读超时至少 25 秒。不要使用 `--privileged`；文件能力需要允许 NextTrace 获得 `NET_RAW`，不能同时开启会阻止该能力的 `no-new-privileges`。host 网络保留探测路由语义，隔离依赖专用节点及管理员配置的出口防火墙；IPv4/IPv6 均需阻止访问管理和本机网络，并保留 DNS、地理数据查询及 ICMP 回包所需流量。应用配额不能代替上游 DDoS 防护。
+| 现象 | 检查项 |
+| --- | --- |
+| 公开模式请求被拒绝 | HTTPS、Host 白名单、代理来源和转发头是否一致 |
+| 保存过的参数无法启动 | 公开模式间隔至少 1 秒，最多 30 跳、512 字节；网卡及端口受限 |
+| 结果延迟、断线频繁 | 每一层反代都关闭 SSE 缓冲，读超时至少 25 秒 |
+| 原生进程无权限执行 | 保留 `NET_RAW`，避免 `--privileged` 和阻断文件能力的 `no-new-privileges` |
+| 重启后任务不存在 | 内存状态已释放，重新开始查询 |
 
-## 外层鉴权示例
+## 源码与接口
 
-下面是一个最小 Nginx Basic Auth 反代示例：
+后端为 Flask + Gunicorn/gevent，前端为原生 JavaScript 模块，无前端打包步骤。CI 覆盖 Python 3.12 / 3.14、Node 24、双架构构建和公开模式容器验收。
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name trace.example.com;
+本地运行需先安装 NextTrace v1.7.5 或后续兼容版本，并为探测进程提供所需权限：
 
-    auth_basic "restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_pass http://127.0.0.1:30080;
-    }
-}
+```bash
+python3.14 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+export NTWA_NEXTTRACE_PATH=/path/to/ntr
+export NTWA_NEXTTRACE_FLAVOR=ntr
+export NTWA_SECRET_KEY="$(openssl rand -hex 32)"
+gunicorn --config gunicorn.conf.py --worker-class gevent --workers 1 \
+  --bind 127.0.0.1:35000 app:app
 ```
 
-## 任务通信
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/traces/resolve` | 解析候选地址，不启动进程 |
+| `POST /api/traces` | 使用明确 IP、`extra` 设置和 `request_id` 创建任务，返回 `task_id` |
+| `GET /api/traces/{task_id}` | 当前状态及完整统计快照 |
+| `GET /api/traces/{task_id}/events` | SSE 快照流，携带递增 `seq` |
+| `POST /api/traces/{task_id}/lease` | 续租 |
+| `POST /api/traces/{task_id}/stop` | 幂等停止 |
+| `GET /api/devices` | 可用网卡；公开模式只显示管理员配置 |
+| `GET /healthz` | 服务及原生二进制可用性 |
 
-要求支持 `--mtr --json` 的 NextTrace v1.7.5 或后续兼容版本。HTTP 创建和停止任务，SSE 发送完整统计快照；刷新后根据 sessionStorage 续接任务。页面每 10 秒续租，连续 30 秒未续租停止任务；终态任务及请求去重记录保留 5 分钟。继续使用单个 Gunicorn gevent worker，任务仅保存在内存中，服务重启后不恢复。新配置默认同一跳两次发送相隔 1 秒，各跳独立推进；已有间隔保持原样。页面显示与执行参数使用同一有效配置。
+任务接口需要保留会话 Cookie；POST 使用 JSON。后端按 TTL 聚合逐探针事件，运行中快照最多每 100ms 推送一次；首次订阅、重连和终态立即发送。这与原生多响应者报告的统计口径不同。
 
-Docker 构建会将 `NEXTTRACE_ASSET_PREFIX` 记为 `NTWA_NEXTTRACE_FLAVOR`：MTR 专用的 `ntr` 使用 `--json`，`nexttrace` 与 `nexttrace-tiny` 使用 `--mtr --json`。Docker 外自定义二进制时按实际 flavor 设置该变量，默认 `nexttrace`。
+自建镜像：`docker build -t nexttraceweb:local .`。默认构建版本 `v1.7.5`、flavor `ntr`；可用 `NEXTTRACE_RELEASE_TAG` 和 `NEXTTRACE_ASSET_PREFIX` 调整，后者支持 `ntr`、`nexttrace`、`nexttrace-tiny`。下载使用仓库内固定 SHA256、GitHub 发布摘要或显式传入的 `NEXTTRACE_SHA256` 校验；缺失或不匹配时构建失败。发布镜像的版本由 CI 解析发布标签后固定。
+
+`ntr` 使用 `--json`，full / tiny 使用 `--mtr --json`，要求 [MTR JSON schema version 1](https://github.com/nxtrace/NTrace-core/blob/v1.7.5/docs/mtr-json.md)。不支持的二进制会报错，不回退 RAW 模式。
+
+## 许可证
+
+[GPL-3.0](LICENSE)。感谢 NextTrace 社区与 PING.PE。

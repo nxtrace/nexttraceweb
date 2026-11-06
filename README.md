@@ -1,82 +1,109 @@
-<div align="center">
+# NextTrace Web
 
-<img src="https://github.com/nxtrace/NTrace-core/raw/main/assets/logo.png" height="200px" alt="NextTrace Logo"/>
+**English** | [简体中文](README.zh-CN.md)
 
-# NEXTTRACE WEB
-
-A lightweight web API server for NextTrace — run visual traceroutes from your browser.
-
-<div align="center">
-
+[![CI](https://github.com/nxtrace/nexttraceweb/actions/workflows/docker-image.yml/badge.svg)](https://github.com/nxtrace/nexttraceweb/actions/workflows/docker-image.yml)
 [![Docker Pulls](https://img.shields.io/docker/pulls/tsosc/nexttraceweb)](https://hub.docker.com/r/tsosc/nexttraceweb)
-[![License](https://img.shields.io/github/license/nxtrace/nexttraceweb)](LICENSE)
+[![GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
-[中文](README.zh-CN.md) | **English**
+Continuous traceroute from your browser, for private diagnostics or a public Looking Glass. Built on [NextTrace](https://github.com/nxtrace/NTrace-core), with an interface inspired by [PING.PE](https://ping.pe).
 
-</div>
+![Current English trace results](docs/images/trace-en.jpg)
 
-</div>
+<details>
+<summary>View the settings panel</summary>
 
----
+![Current English settings panel](docs/images/settings-en.jpg)
 
-<img width="1440" alt="NextTrace Web Interface" src="https://github.com/tsosunchia/nexttracewebapi/assets/59512455/798554e2-190e-4425-9527-3a11708dafd8">
+</details>
 
-<p align="center">
-  <img width="443" alt="IP Selection Dialog" src="https://github.com/tsosunchia/nexttracewebapi/assets/59512455/1eb4b6ce-3ed9-4728-be85-fbdabc5803bd">
-  <img width="721" alt="Traceroute Results" src="https://github.com/tsosunchia/nexttracewebapi/assets/59512455/a0563bfc-37a8-417a-89bf-3ab87ef44d6d">
-</p>
+## Features
 
----
+- IPv4 / IPv6 with ICMP, TCP and UDP. Enter an IP, domain or URL and select among resolved addresses.
+- Per-hop IP, ASN, location, owner, loss, sent count, latest / average / best / worst latency, standard deviation and PTR.
+- HTTP task control and SSE statistics. Refreshes and short disconnects resume the same process; stopping retains received results.
+- English and Simplified Chinese, independent interface and GeoIP languages, browser-local preferences and recent queries.
+- Optional public mode enforcing target, concurrency, probe, duration and connection limits on the server.
 
-## Overview
+## Quick start
 
-NextTrace Web is a spin-off of the [NextTrace](https://github.com/nxtrace/NTrace-core) project. It provides a simple web frontend and API server so you can run traceroutes and visualize results — including hop, IP, ASN, geolocation, domain, packet loss, and latency stats — entirely from your browser.
-
-> **Reverse proxy note:** Task control uses HTTP; results use SSE. Disable proxy buffering. The Docker image includes this configuration.
-
-*Inspired by [PING.PE](https://ping.pe) — thanks for years of keeping that service alive and giving the community such a great reference.*
-
----
-
-## How To Use
-
-### Docker (Recommended)
+Use Docker Engine on Linux. Images support `linux/amd64` and `linux/arm64`. This example listens only on localhost for initial testing.
 
 ```bash
-docker pull tsosc/nexttraceweb
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
-# Visit http://127.0.0.1:30080
+umask 077
+printf 'NTWA_SECRET_KEY=%s\n' "$(openssl rand -hex 32)" > .env
+
+docker pull tsosc/nexttraceweb:latest
+docker run -d --name ntwa --restart unless-stopped \
+  --network host --cap-drop ALL --cap-add NET_RAW \
+  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+  --memory 512m --cpus 1 --pids-limit 128 \
+  --ulimit nofile=1024:1024 \
+  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+  --env-file .env tsosc/nexttraceweb:latest 127.0.0.1:30080
 ```
 
-Expose the service to the Internet through your own reverse proxy or gateway. This project does not ship an in-app login flow.
+Open <http://127.0.0.1:30080/>. For a remote server, forward the port with `ssh -L 30080:127.0.0.1:30080 user@server`.
 
-### Custom Address & Port
+The image runs as UID `10001`; only the NextTrace executable has the `NET_RAW` file capability. Neither `--privileged` nor `NET_ADMIN` is needed. Do not enable a `no-new-privileges` setting that prevents the file capability from taking effect. Host networking preserves the probe node's routing.
 
-Pass an address/port argument to `docker run` to override the default:
+The final argument selects the listener: `127.0.0.1:30080` for localhost, `30080` for all IPv4 / IPv6 addresses, or `'[::1]:30080'` for IPv6 localhost. Use an unprivileged port. The default health check uses `30080`; override its command if you change that port.
+
+## Public Looking Glass
+
+Public mode is off by default. Before accepting anonymous visitors, configure a domain and an HTTPS reverse proxy, then use the following `.env` with the run command above. Recreate an existing container to load changed environment variables.
 
 ```bash
-# Bind to localhost only
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 127.0.0.1:30080
-
-# Listen on all IPs, port 8080
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb 8080
-
-# Listen on IPv6 loopback
-docker run --network host -d --cap-drop ALL --cap-add NET_RAW --name ntwa tsosc/nexttraceweb [::1]:30080
+umask 077
+cat > .env <<EOF
+NTWA_PUBLIC_MODE=true
+NTWA_SECRET_KEY=$(openssl rand -hex 32)
+NTWA_TRUSTED_HOSTS=trace.example.com,127.0.0.1,localhost
+NTWA_SESSION_COOKIE_SECURE=true
+NTWA_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+EOF
 ```
 
-## Interface Language
+Replace `trace.example.com` with your domain. The proxy ranges assume a same-host reverse proxy; use the exact proxy IPs/CIDRs for other topologies. `127.0.0.1` allows the container health check. Keep the random secret stable, at least 32 characters long, and out of source control.
 
-The UI ships English and Simplified Chinese. The selector in the page header defaults to **Auto**, which follows the browser's `Accept-Language` preference; pick `English` or `中文` to pin one. The choice is stored in `localStorage` under `uiLanguage`.
+| Item | Public-mode limit |
+| --- | --- |
+| Targets | Public unicast only; blocks local, private, special and selected IPv6 transition addresses. Intermediate hops remain visible |
+| Tasks | At most 4 globally, 1 per session and per IPv4 / IPv6 `/64` |
+| Duration | At most 120 seconds; stops after 30 seconds without lease renewal |
+| Probes | At least 1 second between sends to the same hop, at most 30 hops and 512-byte packets |
+| Probe budget | At most 120 reserved probes/second across TTL spans and intervals; not egress shaping |
+| Creation rate | One token per client and target every 10 seconds, burst 2; retries of the same request remain idempotent |
+| SSE | 2 subscriptions per task, 4 per client, 32 globally |
+| Resolution | 1 concurrent request per client, 4 globally, at most 16 candidate addresses |
+| Data | 8 KiB requests; terminal records pruned by 5-minute retention and a 256-record cap; bounded output |
 
-The separate **Geo Data Language** option inside the settings drawer is unrelated — it is passed straight to `nexttrace` and controls the language of geolocation data, not the interface.
+Excessive settings are rejected, including saved browser preferences. For example, an old `40ms` interval must be changed to at least `1s`. Public health responses expose only status, the devices endpoint exposes only the administrator's fixed interface, and native error details stay private.
 
-## Sub-path Deployment
+### HTTPS reverse proxy
 
-All assets, the `/api/devices` endpoint, and task HTTP/SSE endpoints are resolved relative to the page's own directory, so the app can be mounted under a sub-path. The outer proxy must **strip the prefix** (note the trailing slash on both `location` and `proxy_pass`) and redirect the prefix without a trailing slash:
+Add this to an Nginx HTTPS `server` with certificates already configured:
 
 ```nginx
-# In the server block. https://example.com/tools/nexttrace/ maps to the container root:
+location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 60s;
+    proxy_pass http://127.0.0.1:30080;
+}
+```
+
+Overwrite forwarding headers and trust only configured proxies. SSE does not use WebSockets or require `Upgrade`. The server sends idle keepalives every 10 seconds; allow at least 25 seconds between reads at the outer proxy. Add Basic Auth or other gateway authentication for restricted access if needed.
+
+### Sub-path deployment
+
+To mount at `/tools/nexttrace/`, replace the `location /` above with these two blocks. Strip the prefix, retain both trailing slashes, and preserve query parameters in the redirect.
+
+```nginx
 location = /tools/nexttrace {
     return 301 /tools/nexttrace/$is_args$args;
 }
@@ -86,99 +113,95 @@ location /tools/nexttrace/ {
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
     proxy_buffering off;
+    proxy_read_timeout 60s;
     proxy_pass http://127.0.0.1:30080/;
 }
 ```
 
-Both trailing slashes matter. Drop the one on `proxy_pass` and the backend receives `/tools/nexttrace/...`, for which it has no route. The 301 covers visitors who leave the trailing slash out of the address bar: the browser resolves relative references against the parent directory, so the assets would be fetched from `/tools/assets/...` and the page would render unstyled.
+Use a dedicated probe node and IPv4 / IPv6 egress rules to isolate local and management networks. Nodes behind NAT should add their own public addresses to the deny list. Application quotas do not replace upstream DDoS protection.
 
-## Runtime Notes
+## Configuration
 
-- Health endpoint: `GET /healthz`
-- The container now exits when `gunicorn` or `nginx` dies, so supervisors can restart it instead of leaving a half-dead process tree behind.
-- `nexttrace_error` is now a structured payload with `code` and `message`, plus `retry_after_seconds` on rate-limit and capacity rejections.
+Environment variables are loaded at startup. Recreate the container after changing `.env`.
 
-## Security Defaults
-
-- Configure `NTWA_SECRET_KEY` in production. If omitted, the app generates a temporary random key and logs a warning.
-- Recommended: set `NTWA_TRUSTED_HOSTS=trace.example.com` behind a reverse proxy.
-- Set `NTWA_SESSION_COOKIE_SECURE=true` only when the outer proxy serves HTTPS.
-- Abuse controls:
-  - `NTWA_MIN_START_INTERVAL_SECONDS`
-  - `NTWA_MAX_ACTIVE_TRACES`
-  - `NTWA_TRACE_IDLE_TIMEOUT_SECONDS`
-  - `NTWA_TRACE_MAX_DURATION_SECONDS`
-
-## Public Looking Glass
-
-Set `NTWA_PUBLIC_MODE=true` to enable the server-side public policy (off by default). The page remains unchanged. Normal mode retains existing settings, including saved 40ms intervals. Public mode rejects excessive settings instead of silently changing requests.
-
-| Limit | Public mode |
+| Variable | Default / purpose |
 | --- | --- |
-| Targets | Public unicast only; blocks local, private, special and IPv6 transition addresses |
-| Tasks | At most 4 globally, 1 per session and per IPv4 / IPv6 `/64` |
-| Duration | At most 120 seconds; the existing 30-second orphan lease still applies |
-| Probes | At least 1 second per hop, at most 30 hops and 512-byte packets |
-| Budget | At most 120 reserved probes/second from TTL span and interval; not egress shaping |
-| Creation | One token per client and target every 10 seconds, burst 2; retries remain idempotent |
-| SSE | 2 subscriptions per task, 4 per client, 32 globally; reconnects reuse the task |
-| Resolution | 1 concurrent request per client, 4 globally; at most 16 candidate addresses |
-| Data | 8 KiB request bodies; terminal retention of 5 minutes and at most 256 records; bounded output |
+| `NTWA_PUBLIC_MODE` | `false`; enables public mode |
+| `NTWA_SECRET_KEY` | Generated temporarily if missing in normal mode; public mode requires an explicit value of at least 32 characters |
+| `NTWA_TRUSTED_HOSTS` | Empty in normal mode; required in public mode; comma-separated hostnames or IPs |
+| `NTWA_SESSION_COOKIE_SECURE` | `false` in normal mode, `true` in public mode; explicitly disable only for local HTTP tests |
+| `NTWA_TRUSTED_PROXIES` | Outer proxy IPs/CIDRs; empty by default; comma-separated |
+| `NTWA_MAX_ACTIVE_TRACES` | `64` in normal mode; public mode caps at `4` and permits tighter limits |
+| `NTWA_MIN_START_INTERVAL_SECONDS` | Per-session creation cooldown of `1` second; at least `2` in public mode |
+| `NTWA_TRACE_MAX_DURATION_SECONDS` | `0` means unlimited in normal mode; at most `120` seconds in public mode, with tighter limits allowed |
+| `NTWA_TRACE_IDLE_TIMEOUT_SECONDS` | `120` seconds without native output; `0` disables this check |
+| `NTWA_PUBLIC_DENY_CIDRS` | Additional blocked target IPs/CIDRs; empty by default; comma-separated |
+| `NTWA_PUBLIC_DEVICE` | Fixed probe interface; defaults to system routing; visitors cannot select another interface |
+| `NTWA_PUBLIC_TCP_PORTS` | `80,443`; first entry used when omitted |
+| `NTWA_PUBLIC_UDP_PORTS` | `80,443,33494`; first entry used when omitted; ICMP ignores ports |
+| `NTWA_NEXTTRACE_PATH` | `/usr/local/bin/nexttrace` |
+| `NTWA_NEXTTRACE_FLAVOR` | `nexttrace` outside Docker; `ntr` in the default image |
+| `NTWA_LOG_LEVEL` | `INFO` |
 
-Administrator-only configuration:
+Normal mode retains existing parameter ranges and saved intervals. The default 1-second interval is **between sends to the same hop**. Hops advance independently; it is not one global interval shared by all probes.
 
-- `NTWA_SECRET_KEY`: a random secret of at least 32 characters, e.g. generated by `openssl rand -hex 32`. Public mode refuses startup without it.
-- `NTWA_TRUSTED_HOSTS`: comma-separated allowed hostnames, required in public mode.
-- `NTWA_SESSION_COOKIE_SECURE`: defaults to `true` in public mode and requires an outer HTTPS proxy. Explicit `false` is for local HTTP tests.
-- `NTWA_TRUSTED_PROXIES`: exact outer proxy IPs/CIDRs; no external proxy headers are trusted by default. Use `127.0.0.1/32,::1/128` for a same-host proxy. It must overwrite `X-Forwarded-For` and `X-Forwarded-Proto`, as in the sub-path example above. Never trust arbitrary sources.
-- `NTWA_PUBLIC_DENY_CIDRS`: additional blocked management ranges or public addresses. Private intermediate hops remain visible in results.
-- `NTWA_PUBLIC_DEVICE`: fixed outbound interface; defaults to system routing. The public devices endpoint no longer enumerates host interfaces.
-- `NTWA_PUBLIC_TCP_PORTS`: defaults to `80,443`; `NTWA_PUBLIC_UDP_PORTS`: defaults to `80,443,33494`. The first entry is used when omitted. ICMP ignores the page's port field.
+## Usage and operation
 
-Existing concurrency/duration options can tighten public limits further. Keep one Gunicorn worker; in-memory quotas are not shared across independent instances. Public health responses expose only status, native error details stay private, and children inherit only necessary runtime configuration.
-
-The image runs as a non-root user; only the NextTrace executable has `NET_RAW` file capability. The default v1.7.5 download is checked against committed SHA256 values. Custom releases use GitHub release digests or the `NEXTTRACE_SHA256` build argument; missing/mismatched checksums fail the build.
-
-After preparing an administrator-readable `.env.public`, run on a dedicated probe node:
+- **Refresh and reconnect:** the browser renews every 10 seconds and can resume within the 30-second lease window. Task IDs live in `sessionStorage`; ownership is checked against the session cookie.
+- **Stop and reset:** stopping retains received results; resetting clears the current results and target. Share links contain only the target, without a results snapshot.
+- **Language and resolution:** interface language can follow browser preferences; GeoIP language is independent. Both browser DoH and server-side resolution are supported.
+- **State:** use one Gunicorn gevent worker. Tasks and request deduplication are in memory, do not survive restarts and are not shared across instances.
+- **Processes:** stopping sends SIGTERM, then forces cleanup after 2 seconds if needed. The container exits when Gunicorn or Nginx exits.
 
 ```bash
-docker run -d --name ntwa --network host \
-  --cap-drop ALL --cap-add NET_RAW \
-  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
-  --memory 512m --cpus 1 --pids-limit 128 \
-  --ulimit nofile=1024:1024 \
-  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
-  --env-file .env.public tsosc/nexttraceweb 127.0.0.1:30080
+curl -fsS http://127.0.0.1:30080/healthz
+docker logs --tail 100 ntwa
 ```
 
-The outer HTTPS proxy must disable SSE buffering and allow at least 25 seconds between reads. Do not use `--privileged`. File capabilities must allow NextTrace to gain `NET_RAW`; a `no-new-privileges` setting that prevents this will break probing. Host networking preserves probe routing; use a dedicated node and administrator-managed IPv4/IPv6 egress rules to block management/local networks while retaining required DNS, GeoIP and ICMP reply traffic. Application quotas do not replace upstream DDoS protection.
+| Symptom | Check |
+| --- | --- |
+| Public requests are rejected | HTTPS, allowed Host values, trusted proxy sources and forwarding headers |
+| Saved settings cannot start a trace | Public limits: interval at least 1 second, at most 30 hops / 512 bytes, restricted interfaces and ports |
+| Delayed results or frequent disconnects | Disable SSE buffering at every proxy and allow at least 25 seconds between reads |
+| Native executable permission failure | Retain `NET_RAW`; avoid `--privileged` and a `no-new-privileges` setting that blocks file capabilities |
+| Task missing after restart | In-memory state was released; start a new query |
 
-## External Auth Example
+## Source and API
 
-Minimal Nginx example with Basic Auth in front of the container:
+The backend uses Flask with Gunicorn/gevent; the frontend uses native JavaScript modules without a build step. CI covers Python 3.12 / 3.14, Node 24, both image architectures and public-mode container acceptance.
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name trace.example.com;
+For local development, install NextTrace v1.7.5 or a compatible later version and provide the required probe permissions:
 
-    auth_basic "restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_pass http://127.0.0.1:30080;
-    }
-}
+```bash
+python3.14 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+export NTWA_NEXTTRACE_PATH=/path/to/ntr
+export NTWA_NEXTTRACE_FLAVOR=ntr
+export NTWA_SECRET_KEY="$(openssl rand -hex 32)"
+gunicorn --config gunicorn.conf.py --worker-class gevent --workers 1 \
+  --bind 127.0.0.1:35000 app:app
 ```
 
-## Task transport
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/traces/resolve` | Resolve candidates without starting a process |
+| `POST /api/traces` | Create from an explicit IP, `extra` settings and `request_id`; returns `task_id` |
+| `GET /api/traces/{task_id}` | Current state and full statistics snapshot |
+| `GET /api/traces/{task_id}/events` | SSE snapshots with increasing `seq` |
+| `POST /api/traces/{task_id}/lease` | Renew the lease |
+| `POST /api/traces/{task_id}/stop` | Idempotent stop |
+| `GET /api/devices` | Available interfaces; only the configured interface in public mode |
+| `GET /healthz` | Service and native binary availability |
 
-NextTrace v1.7.5+ with `--mtr --json` is required. Task creation and stop use HTTP; SSE sends full statistics snapshots. Refresh resumes the task stored in sessionStorage. Pages renew the lease every 10 seconds; tasks stop after 30 seconds without renewal. Finished tasks and request deduplication records expire after 5 minutes. Use one Gunicorn gevent worker; task state is in memory and is lost on service restart. New settings default to a 1-second interval between sends to the same TTL; saved intervals remain unchanged. Browser display and CLI arguments use the same effective settings.
+Keep session cookies when calling task endpoints; POST bodies are JSON. The backend aggregates probe events by TTL and publishes running snapshots at most once per 100ms; first subscriptions, reconnects and terminal states receive immediate snapshots. These statistics are separate from native multi-responder reports.
 
-The Docker build records `NEXTTRACE_ASSET_PREFIX` as `NTWA_NEXTTRACE_FLAVOR`: `ntr` uses `--json` because it is MTR-only; `nexttrace` and `nexttrace-tiny` use `--mtr --json`. For a custom native binary outside Docker, set `NTWA_NEXTTRACE_FLAVOR` to its flavor (default: `nexttrace`).
+Build locally with `docker build -t nexttraceweb:local .`. Defaults are `v1.7.5` and flavor `ntr`; override with `NEXTTRACE_RELEASE_TAG` and `NEXTTRACE_ASSET_PREFIX` (`ntr`, `nexttrace`, `nexttrace-tiny`). Downloads are verified against committed SHA256 values, GitHub release digests or an explicit `NEXTTRACE_SHA256`. Missing or mismatched digests fail the build. Published images use a release tag resolved and fixed by CI.
+
+`ntr` uses `--json`; full / tiny use `--mtr --json`. [MTR JSON schema version 1](https://github.com/nxtrace/NTrace-core/blob/v1.7.5/docs/mtr-json.md) is required. Unsupported binaries fail explicitly, without falling back to RAW mode.
+
+## License
+
+[GPL-3.0](LICENSE). Thanks to the NextTrace community and PING.PE.

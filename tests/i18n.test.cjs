@@ -217,7 +217,7 @@ test('every translation key used by the browser scripts exists in the dictionari
 });
 
 test('every backend error code is either localized or deliberately passed through', () => {
-  const appSource = ['ntwa/config.py', 'ntwa/http.py', 'ntwa/tasks.py'].map(file => fs.readFileSync(path.join(repoRoot, file), 'utf8')).join('\n');
+  const appSource = ['ntwa/config.py', 'ntwa/http.py', 'ntwa/tasks.py', 'ntwa/public.py', 'ntwa/limits.py'].map(file => fs.readFileSync(path.join(repoRoot, file), 'utf8')).join('\n');
   const codePattern = /(?:PayloadError\(\s*|code=)[\'"]([a-z_]+)[\'"]/g;
   const codes = new Set();
   let match = codePattern.exec(appSource);
@@ -228,7 +228,7 @@ test('every backend error code is either localized or deliberately passed throug
   }
 
   // Process diagnostics and transport rejections retain their original messages.
-  const passthroughCodes = new Set(['nexttrace_error', 'invalid_origin', 'untrusted_host']);
+  const passthroughCodes = new Set(['nexttrace_error', 'invalid_origin', 'untrusted_host', 'https_required', 'target_not_allowed']);
   const dictionary = getDictionary('en');
 
   assert.ok(codes.size >= 7, `expected to find the backend error codes, found ${codes.size}`);

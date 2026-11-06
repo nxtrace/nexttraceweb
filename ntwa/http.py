@@ -35,7 +35,7 @@ def register_routes(app):
             g.trace_client, trusted = public.client(request)
             scheme = request.headers.get('X-Forwarded-Proto', request.scheme) if trusted else request.scheme
             if app.config['SESSION_COOKIE_SECURE'] and scheme != 'https':
-                return jsonify(code='https_required'), 403
+                return jsonify(code='https_required', message='需要安全连接'), 403
             if request.method == 'POST' and (not request.is_json or request.headers.get('Sec-Fetch-Site') == 'cross-site'
                     or origin and urlparse(origin).scheme != scheme):
                 return jsonify(code='invalid_origin'), 403

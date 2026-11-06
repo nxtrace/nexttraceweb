@@ -163,6 +163,19 @@ class PublicModeTests(unittest.TestCase):
         self.assertEqual(second.status_code, 201, second.get_json())
         self.assertEqual(self.start.call_count, 2)
 
+    def test_public_https_rejection_has_message_and_trusted_termination_is_accepted(self):
+        self.app.config['SESSION_COOKIE_SECURE'] = True
+        rejected = self.create()
+        self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(rejected.get_json()['code'], 'https_required')
+        self.assertTrue(rejected.get_json()['message'])
+        self.start.assert_not_called()
+        accepted = self.create(source='127.0.0.1', headers={
+            'X-Real-IP': '198.51.100.10', 'X-Forwarded-Proto': 'https', 'Origin': 'https://localhost',
+        })
+        self.assertEqual(accepted.status_code, 201, accepted.get_json())
+        self.start.assert_called_once()
+
     def test_session_quota_survives_source_address_change(self):
         first = self.create()
         self.assertEqual(first.status_code, 201, first.get_json())

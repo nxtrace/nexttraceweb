@@ -249,6 +249,80 @@ class AppRuntimeTests(unittest.TestCase):
         packet = self._get_event("nexttrace_error")
         self.assertEqual(packet["args"][0]["code"], "trace_capacity_exceeded")
 
+    def test_replacement_rechecks_capacity_after_old_task_cleanup(self):
+        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
+        other_client = app_module.socketio.test_client(app_module.app)
+        try:
+            with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None) as start:
+                self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1"})
+                sid, old_task = next(iter(app_module.clients.items()))
+
+                def stop_old_task():
+                    app_module.cleanup_client_state(sid, task=old_task)
+                    other_client.emit("start_nexttrace", {"ip": "8.8.8.8"})
+
+                old_task.request_stop = mock.Mock(side_effect=stop_old_task)
+                self.socket_client.emit("start_nexttrace", {"ip": "9.9.9.9"})
+
+                self.assertEqual(len(app_module.clients), 1)
+                self.assertEqual(start.call_count, 2)
+                self.assertNotIn(sid, app_module.clients)
+                packet = self._get_event("nexttrace_error")
+                self.assertEqual(packet["args"][0]["code"], "trace_capacity_exceeded")
+        finally:
+            other_client.disconnect()
+
+    def test_new_sessions_recheck_capacity_before_registration(self):
+        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
+        other_client = app_module.socketio.test_client(app_module.app)
+        original_enforce = app_module.enforce_start_limits
+        interleaved = False
+
+        def interleave_start(sid):
+            nonlocal interleaved
+            original_enforce(sid)
+            if not interleaved:
+                interleaved = True
+                other_client.emit("start_nexttrace", {"ip": "8.8.8.8"})
+
+        try:
+            with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None) as start:
+                with mock.patch.object(app_module, "enforce_start_limits", side_effect=interleave_start):
+                    self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1"})
+
+                self.assertEqual(len(app_module.clients), 1)
+                self.assertEqual(start.call_count, 1)
+                packet = self._get_event("nexttrace_error")
+                self.assertEqual(packet["args"][0]["code"], "trace_capacity_exceeded")
+        finally:
+            other_client.disconnect()
+
+    def test_replacement_at_capacity_preserves_new_task_on_stale_cleanup(self):
+        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
+        with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None) as start:
+            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1"})
+            sid, old_task = next(iter(app_module.clients.items()))
+            old_task.request_stop = mock.Mock()
+            self.socket_client.emit("start_nexttrace", {"ip": "8.8.8.8"})
+            new_task = app_module.clients[sid]
+            app_module.cleanup_client_state(sid, task=old_task)
+
+        self.assertIsNot(new_task, old_task)
+        self.assertIs(app_module.clients[sid], new_task)
+        self.assertEqual(start.call_count, 2)
+        old_task.request_stop.assert_called_once_with()
+
+    def test_stopped_pending_task_does_not_launch_a_process(self):
+        task = app_module.TraceTask("pending-sid", ["1.1.1.1"], "/usr/local/bin/nexttrace")
+        task.request_stop()
+        FakePopen.configure()
+        with mock.patch.object(app_module.subprocess, "Popen", side_effect=FakePopen) as popen:
+            with mock.patch.object(app_module.socketio, "emit") as emit:
+                task.run()
+
+        self.assertEqual(popen.call_count, 0)
+        emit.assert_called_once_with("nexttrace_complete", room="pending-sid")
+
     def test_start_nexttrace_emits_mtr_raw_and_complete(self):
         FakePopen.configure(
             stdout_lines=[

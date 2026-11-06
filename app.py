@@ -221,21 +221,25 @@ class TraceTask:
     def run(self):
         command = build_mtr_raw_command(self.nexttrace_path, self.params)
         logging.info("Starting nexttrace sid=%s command=%s", self.sid, command)
-        try:
-            self.process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                env=build_process_env(os.environ),
-            )
-        except OSError as exc:
-            logging.error("Failed to start nexttrace sid=%s: %s", self.sid, exc)
-            self.emit_error("start_failed", "启动 nexttrace 失败，请检查服务器配置")
-            self.emit_complete()
-            return
+        with self._stop_lock:
+            if self._stop_event.is_set():
+                self.emit_complete()
+                return
+            try:
+                self.process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    env=build_process_env(os.environ),
+                )
+            except OSError as exc:
+                logging.error("Failed to start nexttrace sid=%s: %s", self.sid, exc)
+                self.emit_error("start_failed", "启动 nexttrace 失败，请检查服务器配置")
+                self.emit_complete()
+                return
 
         stderr_thread = threading.Thread(target=self._consume_stderr, daemon=True, name=f"trace-stderr-{self.sid}")
         stderr_thread.start()
@@ -554,10 +558,20 @@ def parse_trace_option(line: str) -> Optional[str]:
     return match.group(1).strip()
 
 
+def enforce_trace_capacity(sid: str):
+    existing_task = clients.get(sid)
+    active_count = len(clients) - (1 if existing_task else 0)
+    if active_count >= app.config["NTWA_MAX_ACTIVE_TRACES"]:
+        raise PayloadError(
+            "trace_capacity_exceeded",
+            "当前并发任务已达上限，请稍后再试",
+            retry_after_seconds=1.0,
+        )
+
+
 def enforce_start_limits(sid: str):
     now = time.monotonic()
     min_interval = app.config["NTWA_MIN_START_INTERVAL_SECONDS"]
-    max_active = app.config["NTWA_MAX_ACTIVE_TRACES"]
     with clients_lock:
         last_start = client_last_start.get(sid)
         if last_start is not None and min_interval > 0:
@@ -568,14 +582,7 @@ def enforce_start_limits(sid: str):
                     "操作过于频繁，请稍后再试",
                     retry_after_seconds=round(remaining, 3),
                 )
-        existing_task = clients.get(sid)
-        active_count = len(clients) - (1 if existing_task else 0)
-        if active_count >= max_active:
-            raise PayloadError(
-                "trace_capacity_exceeded",
-                "当前并发任务已达上限，请稍后再试",
-                retry_after_seconds=1.0,
-            )
+        enforce_trace_capacity(sid)
         client_last_start[sid] = now
 
 
@@ -676,8 +683,16 @@ def start_nexttrace(data):
         existing_task.request_stop()
 
     task = TraceTask(sid, params, app.config["NTWA_NEXTTRACE_PATH"])
-    with clients_lock:
-        clients[sid] = task
+    try:
+        with clients_lock:
+            current_task = clients.get(sid)
+            if current_task is not None and current_task is not existing_task:
+                return
+            enforce_trace_capacity(sid)
+            clients[sid] = task
+    except PayloadError as exc:
+        emit_nexttrace_error(sid, exc.code, exc.message, exc.retry_after_seconds)
+        return
     task.start()
 
 

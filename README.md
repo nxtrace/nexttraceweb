@@ -32,7 +32,7 @@ A lightweight web API server for NextTrace — run visual traceroutes from your 
 
 NextTrace Web is a spin-off of the [NextTrace](https://github.com/nxtrace/NTrace-core) project. It provides a simple web frontend and API server so you can run traceroutes and visualize results — including hop, IP, ASN, geolocation, domain, packet loss, and latency stats — entirely from your browser.
 
-> **Reverse proxy note:** This project uses WebSocket as its communication protocol. If you configure a reverse proxy, please refer to the Nginx config included in this repository. The provided Docker image already has Nginx reverse proxy built in.
+> **Reverse proxy note:** Task control uses HTTP; results use SSE. Disable proxy buffering. The Docker image includes this configuration.
 
 *Inspired by [PING.PE](https://ping.pe) — thanks for years of keeping that service alive and giving the community such a great reference.*
 
@@ -92,6 +92,7 @@ location /tools/nexttrace/ {
     proxy_set_header Host $http_host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
+    proxy_buffering off;
     proxy_pass http://127.0.0.1:30080/;
 }
 ```
@@ -132,7 +133,14 @@ server {
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
         proxy_pass http://127.0.0.1:30080;
     }
 }
 ```
+
+## Task transport
+
+NextTrace v1.7.5+ with `--mtr --json` is required. Task creation and stop use HTTP; SSE sends full statistics snapshots. Refresh resumes the task stored in sessionStorage. Pages renew the lease every 10 seconds; tasks stop after 30 seconds without renewal. Finished tasks and request deduplication records expire after 5 minutes. Use one Gunicorn gevent worker; task state is in memory and is lost on service restart. New settings default to a 1-second interval between sends to the same TTL; saved intervals remain unchanged. Browser display and CLI arguments use the same effective settings.
+
+The Docker build records `NEXTTRACE_ASSET_PREFIX` as `NTWA_NEXTTRACE_FLAVOR`: `ntr` uses `--json` because it is MTR-only; `nexttrace` and `nexttrace-tiny` use `--mtr --json`. For a custom native binary outside Docker, set `NTWA_NEXTTRACE_FLAVOR` to its flavor (default: `nexttrace`).

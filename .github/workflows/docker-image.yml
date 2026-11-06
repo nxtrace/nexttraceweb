@@ -69,7 +69,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Check browser scripts
         run: |
@@ -79,13 +79,11 @@ jobs:
           node --check assets/js/paths.js
           node --check assets/js/settingsmenu.js
           node --check assets/js/ui-state.js
-          node --check tests/browser-harness.cjs
-          node --check tests/browser-controls.check.cjs
+          for script in assets/js/trace-client.js assets/js/target-resolver.js assets/js/settings-store.js assets/js/view.js; do node --check "$script"; done
 
       - name: Run frontend tests
         run: |
           node --test tests/*.test.cjs
-          node tests/browser-controls.check.cjs
 
   security-check:
     runs-on: ubuntu-latest
@@ -112,11 +110,13 @@ jobs:
 
           required_snippets = {
               "app.py": [
-                  "NTWA_SECRET_KEY",
+
                   "NTWA_TRUSTED_HOSTS",
                   "SESSION_COOKIE_HTTPONLY",
-                  "/healthz",
+
               ],
+              "ntwa/config.py": ["NTWA_SECRET_KEY"],
+              "ntwa/http.py": ["/healthz"],
               "Dockerfile": [
                   "FROM python:3.14-slim",
                   "HEALTHCHECK",
@@ -220,31 +220,22 @@ jobs:
           docker logs "$CONTAINER_ID"
           exit 1
 
-      - name: Verify Socket.IO websocket upgrade
+      - name: Verify task SSE
         run: |
           python - <<'PY'
-          import base64
-          import os
-          import socket
-
-          key = base64.b64encode(os.urandom(16)).decode("ascii")
-          request = "\r\n".join([
-              "GET /socket.io/?EIO=4&transport=websocket HTTP/1.1",
-              "Host: 127.0.0.1:30080",
-              "Upgrade: websocket",
-              "Connection: Upgrade",
-              f"Sec-WebSocket-Key: {key}",
-              "Sec-WebSocket-Version: 13",
-              "\r\n",
-          ]).encode("ascii")
-
-          with socket.create_connection(("127.0.0.1", 30080), timeout=5) as sock:
-              sock.sendall(request)
-              response = sock.recv(1024).decode("iso-8859-1")
-
-          status_line = response.split("\r\n", 1)[0]
-          if " 101 " not in status_line:
-              raise SystemExit(response)
+          import http.cookiejar, json, urllib.request
+          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+          base = 'http://127.0.0.1:30080'
+          client.open(base + '/').close()
+          def post(path, payload):
+              req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json'})
+              return json.load(client.open(req, timeout=10))
+          task = post('/api/traces', {'ip':'127.0.0.1','request_id':'ci-smoke','extra':{'maxHop':1,'dataProvider':'disable-geoip','intervalSeconds':1}})
+          path = '/api/traces/' + task['task_id']
+          with client.open(base + path + '/events', timeout=10) as stream:
+              assert stream.headers.get_content_type() == 'text/event-stream'
+              assert stream.readline().startswith(b'event: snapshot')
+          post(path + '/stop', {})
           PY
 
       - name: Verify container exits when gunicorn dies

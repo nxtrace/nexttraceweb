@@ -217,8 +217,8 @@ test('every translation key used by the browser scripts exists in the dictionari
 });
 
 test('every backend error code is either localized or deliberately passed through', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'app.py'), 'utf8');
-  const codePattern = /(?:PayloadError\(\s*|emit_error\(\s*|emit_nexttrace_error\([^,]+,\s*)"([a-z_]+)"/g;
+  const appSource = ['ntwa/config.py', 'ntwa/http.py', 'ntwa/tasks.py'].map(file => fs.readFileSync(path.join(repoRoot, file), 'utf8')).join('\n');
+  const codePattern = /(?:PayloadError\(\s*|code=)[\'"]([a-z_]+)[\'"]/g;
   const codes = new Set();
   let match = codePattern.exec(appSource);
 
@@ -227,12 +227,11 @@ test('every backend error code is either localized or deliberately passed throug
     match = codePattern.exec(appSource);
   }
 
-  // These two put nexttrace's own stdout/stderr in `message`; translating them would
-  // discard the diagnostic, so main.js shows them verbatim on purpose.
-  const passthroughCodes = new Set(['nexttrace_exit_nonzero', 'nexttrace_invalid_args']);
+  // Process diagnostics and transport rejections retain their original messages.
+  const passthroughCodes = new Set(['nexttrace_error', 'invalid_origin', 'untrusted_host']);
   const dictionary = getDictionary('en');
 
-  assert.ok(codes.size >= 8, `expected to find the backend error codes, found ${codes.size}`);
+  assert.ok(codes.size >= 7, `expected to find the backend error codes, found ${codes.size}`);
 
   const unhandled = Array.from(codes).filter((code) =>
     !passthroughCodes.has(code) &&

@@ -1,18 +1,20 @@
+import { resolveTarget } from './target-resolver.js';
+import { createView } from './view.js';
+import { TraceClient, request } from './trace-client.js';
+import { readSettings } from './settings-store.js';
 var mtrAggApi = window.nextTraceMTRAgg;
 var uiStateApi = window.nextTraceUIState;
 var i18nApi = window.nextTraceI18n;
 var pathsApi = window.nextTracePaths;
-var socket = io.connect(location.origin, {
-    path: pathsApi.joinBasePath(location.pathname, 'socket.io')
-});
-var mtrAggregator = mtrAggApi.createMTRAggregator();
-var traceViewState = mtrAggApi.createTraceViewState();
-var renderTimer = null;
+var snapshotRows = [];
+var activeIntent = 0;
+var resolutionController = null;
+var busy = false;
+var resumeTimer = null;
 var shareTimer = null;
 var modalCancelHandler = null;
 var activeLocale = i18nApi.DEFAULT_LOCALE;
 var tableHeaderHtml = mtrAggApi.TABLE_HEADER_HTML;
-var MTR_RENDER_INTERVAL_MS = 100;
 var RECENT_QUERIES_STORAGE_KEY = 'ntwaRecentQueries';
 var UI_LANGUAGE_STORAGE_KEY = 'uiLanguage';
 var LOCALIZED_SERVER_ERROR_CODES = [
@@ -84,76 +86,65 @@ function handleLanguageChange() {
     renderTable();
 }
 
-socket.on('connect', function () {
-    console.log('Connected');
-    uiState.connectionStatus = 'connected';
-    if (uiState.taskStatus === 'disconnected') {
-        uiState.taskStatus = uiState.rowsRendered > 0 ? 'complete' : 'idle';
-        setNotice('notice.connectionRestored', 'info');
+var { renderTable, initTable, renderUi, renderStatusStrip, renderStatusSummary, renderNotice, renderEmptyState, renderRecentQueries, renderSettingsSummaryPanel, renderActionButtons } = createView({$, t, uiState, uiStateApi, mtrAggApi, readCurrentSettings, getRows: function () { return snapshotRows; }, getHeader: function () { return tableHeaderHtml; }});
+
+var traceClient = new TraceClient(function (snapshot) {
+    snapshotRows = snapshot.rows;
+    uiState.resolvedTarget = snapshot.target || uiState.resolvedTarget;
+    if (!uiState.requestedTarget) uiState.requestedTarget = sessionStorage.getItem('ntwaTaskQuery') || snapshot.target || '';
+    uiState.taskStatus = {starting:'waiting', running:'running', stopping:'running', completed:'complete', cancelled:'complete', failed:'error'}[snapshot.state];
+    busy = ['starting','running','stopping'].includes(snapshot.state);
+    if (snapshot.error) {
+        var key = getServerErrorKey(snapshot.error);
+        if (key) setNotice(key, 'error', shouldShowServerErrorDetail(snapshot.error) ? snapshot.error.message : '');
+        else setNoticeText(snapshot.error.message || t('error.taskFailed'), 'error');
     }
+    renderTable();
+    renderUi();
+}, function (connected) {
+    uiState.connectionStatus = connected ? 'connected' : 'disconnected';
     renderUi();
 });
-
-socket.on('disconnect', function () {
-    console.log('Disconnected');
-    mtrAggApi.cancelTraceIntent(traceViewState);
-    traceViewState.acceptUpdates = false;
-    uiState.connectionStatus = 'disconnected';
-    uiState.taskStatus = 'disconnected';
-    hideSelectionModal(false);
-    clearScheduledRender();
-    setNotice('notice.connectionLost', 'error');
-    renderUi();
-});
-
-socket.on('mtr_raw', function (data) {
-    if (!traceViewState.acceptUpdates) {
-        return;
-    }
-    if (uiState.taskStatus !== 'running') {
-        uiState.taskStatus = 'running';
-        clearNotice();
+window.addEventListener('pagehide', function () { hideSelectionModal(true); ++activeIntent; resolutionController?.abort(); traceClient.detach(); clearTimeout(resumeTimer); busy = false; });
+window.addEventListener('pageshow', function (event) { if (event.persisted) resumeTrace(); });
+async function resumeTrace() {
+    var token = activeIntent;
+    try {
+        await request('api/devices');
+        if (token !== activeIntent) return true;
+        uiState.connectionStatus = 'connected';
+        var resumed = await traceClient.resume();
+        if (token !== activeIntent) return true;
+        if (resumed) $('params').value = sessionStorage.getItem('ntwaTaskQuery') || uiState.resolvedTarget;
         renderUi();
-    }
-    mtrAggApi.ingestMTRRawRecord(mtrAggregator, data);
-    scheduleTableRender();
-});
-
-socket.on('nexttrace_complete', function () {
-    console.log('Nexttrace complete');
-    traceViewState.acceptUpdates = false;
-    if (uiState.connectionStatus === 'connected' && uiState.taskStatus !== 'error') {
-        uiState.taskStatus = 'complete';
-    }
-    renderUi();
-});
-
-socket.on('nexttrace_error', function (data) {
-    var noticeKey = getServerErrorKey(data);
-    var serverMessage = getServerErrorMessage(data);
-    traceViewState.acceptUpdates = false;
-    uiState.taskStatus = 'error';
-    if (noticeKey !== '') {
-        setNotice(noticeKey, 'error', shouldShowServerErrorDetail(data) ? serverMessage : '');
-    } else if (serverMessage !== '') {
-        setNoticeText(serverMessage, 'error');
-    } else {
-        setNotice('error.taskFailed', 'error');
-    }
-    console.error('Nexttrace error:', data);
-    renderUi();
-});
-
-socket.on('nexttrace_options', function (data) {
-    showSelectionModal(t('modal.ipSelector.title'), data, function (index) {
-        socket.emit('nexttrace_options_choice', { choice: index + 1 });
-    }, function () {
-        traceViewState.acceptUpdates = false;
-        uiState.taskStatus = 'idle';
-        setNotice('notice.selectionCancelled', 'info');
+        return resumed;
+    } catch (error) {
+        if (token !== activeIntent) return true;
+        uiState.connectionStatus = error.status ? 'connected' : 'disconnected';
+        if (error.status === 404) {
+            traceClient.detach();
+            traceClient.id = null;
+            busy = false;
+            uiState.taskStatus = snapshotRows.length ? 'complete' : 'idle';
+        }
+        if (error.status && error.status !== 404) {
+            busy = false;
+            uiState.taskStatus = 'error';
+            var key = getServerErrorKey(error);
+            if (key) setNotice(key, 'error'); else setNoticeText(error.message, 'error');
+            renderUi();
+            return true;
+        }
         renderUi();
-    });
-});
+        if (!error.status && (sessionStorage.getItem('ntwaTaskId') || sessionStorage.getItem('ntwaPendingTrace'))) {
+            clearTimeout(resumeTimer);
+            resumeTimer = setTimeout(resumeTrace, 3000);
+            return true;
+        }
+        return error.status === 404;
+    }
+}
+window.resumeTrace = resumeTrace;
 
 function initializePage() {
     applyLocale(resolveActiveLocale());
@@ -234,231 +225,117 @@ function persistPrimaryControlState() {
     renderSettingsSummaryPanel();
 }
 
-function prepareTraceStart(query) {
-    socket.emit('stop_nexttrace');
-    mtrAggApi.cancelTraceIntent(traceViewState);
-    hideSelectionModal(false);
-    clearScheduledRender();
-    mtrAggApi.resetMTRAggregator(mtrAggregator);
-    initTable();
-    uiState.rowsRendered = 0;
-    uiState.requestedTarget = query;
-    uiState.resolvedTarget = '';
+async function startNexttrace() {
+    var query = uiStateApi.normalizeQuery($('params').value);
+    if (!query || busy) return;
+    busy = true;
+    clearTimeout(resumeTimer);
+    var token = ++activeIntent;
+    resolutionController?.abort();
+    resolutionController = new AbortController();
     uiState.taskStatus = 'resolving';
-    traceViewState.acceptUpdates = false;
+    uiState.requestedTarget = query;
     clearNotice();
     renderUi();
-}
-
-async function startNexttrace() {
-    var params = uiStateApi.normalizeQuery($('params').value);
-    if (params === '') {
-        uiState.taskStatus = 'error';
-        setNotice('notice.emptyTarget', 'error');
+    try {
+        var previousId = traceClient.id;
+        traceClient.detach();
+        traceClient.id = null;
+        if (previousId) {
+            try { await traceClient.stop(previousId); }
+            catch (error) { if (error.status !== 404) throw error; }
+        }
+        if (token !== activeIntent) return;
+        busy = true;
+        uiState.taskStatus = 'resolving';
         renderUi();
-        return;
-    }
-
-    prepareTraceStart(params);
-    var startToken = mtrAggApi.beginTraceIntent(traceViewState);
-
-    persistPrimaryControlState();
-
-    var extraSettings = getFormattedSettings();
-    var resolvedTarget = await parseDomain(params);
-    if (!mtrAggApi.isCurrentTraceIntent(traceViewState, startToken)) {
-        return;
-    }
-
-    if (resolvedTarget == null) {
-        traceViewState.acceptUpdates = false;
+        snapshotRows = [];
+        renderTable();
+        var settings = readSettings();
+        var resolved = await resolveTarget(query, settings, resolutionController.signal, function (addresses) {
+            return new Promise(function (resolve) {
+                showSelectionModal(t('modal.ipSelector.title'), addresses, function (index) { resolve(addresses[index]); }, function () {
+                    ++activeIntent;
+                    busy = false;
+                    uiState.taskStatus = 'idle';
+                    setNotice('notice.selectionCancelled', 'info');
+                    renderUi();
+                    resolve(null);
+                });
+            });
+        });
+        if (token !== activeIntent) return;
+        if (!resolved) throw new Error(t('notice.unresolvable'));
+        uiState.resolvedTarget = resolved;
+        sessionStorage.setItem('ntwaTaskQuery', query);
+        var snapshot = await traceClient.create(resolved, settings);
+        if (token !== activeIntent) {
+            if (traceClient.id !== snapshot.task_id && sessionStorage.getItem('ntwaTaskId') !== snapshot.task_id) await traceClient.stop(snapshot.task_id);
+            return;
+        }
+        rememberRecentQuery(query);
+        traceClient.attach(snapshot);
+    } catch (error) {
+        if (token !== activeIntent) return;
+        busy = false;
         uiState.taskStatus = 'error';
-        setNotice('notice.unresolvable', 'error');
+        var key = getServerErrorKey(error);
+        if (key) setNotice(key, 'error'); else setNoticeText(error.message, 'error');
         renderUi();
-        return;
     }
-
-    uiState.resolvedTarget = resolvedTarget;
-    uiState.taskStatus = 'waiting';
-    mtrAggApi.setMTRTargetIp(mtrAggregator, isIpLiteral(resolvedTarget) ? resolvedTarget : '');
-    rememberRecentQuery(params);
-    socket.emit('start_nexttrace', { ip: resolvedTarget, extra: extraSettings });
-    renderUi();
 }
 
-function stopNexttrace() {
-    socket.emit('stop_nexttrace');
-    mtrAggApi.cancelTraceIntent(traceViewState);
-    traceViewState.acceptUpdates = false;
-    clearScheduledRender();
-    hideSelectionModal(false);
-    uiState.taskStatus = uiState.rowsRendered > 0 ? 'complete' : 'idle';
-    if (uiState.rowsRendered > 0) {
-        setNotice('notice.stopped', 'info');
-    } else {
-        clearNotice();
+async function stopNexttrace() {
+    hideSelectionModal(true);
+    var token = ++activeIntent;
+    clearTimeout(resumeTimer);
+    traceClient.detach();
+    sessionStorage.removeItem('ntwaPendingTrace');
+    sessionStorage.removeItem('ntwaPendingTraceAt');
+    resolutionController?.abort();
+    busy = true;
+    var id = traceClient.id || sessionStorage.getItem('ntwaTaskId');
+    try {
+        var snapshot = await traceClient.stop(id);
+        if (token !== activeIntent) return false;
+        if (snapshot) traceClient.attach(snapshot);
+    } catch (error) {
+        if (token !== activeIntent) return false;
+        if (error.status !== 404) {
+            busy = false;
+            setNoticeText(error.message, 'error');
+            renderUi();
+            return false;
+        }
+        traceClient.detach();
+        traceClient.id = null;
+        if (sessionStorage.getItem('ntwaTaskId') === id) sessionStorage.removeItem('ntwaTaskId');
     }
+    if (token !== activeIntent) return false;
+    busy = false;
+    uiState.taskStatus = snapshotRows.length ? 'complete' : 'idle';
+    renderTable();
     renderUi();
+    return true;
 }
 
-function resetForm() {
-    socket.emit('stop_nexttrace');
-    mtrAggApi.cancelTraceIntent(traceViewState);
-    traceViewState.acceptUpdates = false;
-    hideSelectionModal(false);
-    clearScheduledRender();
-    mtrAggApi.resetMTRAggregator(mtrAggregator);
+async function resetForm() {
+    hideSelectionModal(true);
+    var token = activeIntent + 1;
+    if (!await stopNexttrace() || token !== activeIntent) return;
+    traceClient.detach();
+    traceClient.id = null;
+    sessionStorage.removeItem('ntwaTaskId');
+    sessionStorage.removeItem('ntwaTaskQuery');
+    snapshotRows = [];
     uiState.rowsRendered = 0;
     uiState.taskStatus = 'idle';
     uiState.requestedTarget = '';
     uiState.resolvedTarget = '';
     clearNotice();
     $('params').value = '';
-    initTable();
-    syncTargetPreview();
+    renderTable();
     renderUi();
-}
-
-function clearScheduledRender() {
-    if (renderTimer !== null) {
-        clearTimeout(renderTimer);
-        renderTimer = null;
-    }
-}
-
-function scheduleTableRender() {
-    if (renderTimer !== null) {
-        return;
-    }
-    renderTimer = setTimeout(function () {
-        renderTimer = null;
-        renderTable();
-    }, MTR_RENDER_INTERVAL_MS);
-}
-
-function renderTable() {
-    var rows = mtrAggApi.buildRenderableRows(mtrAggregator);
-    uiState.rowsRendered = rows.length;
-    $('output').querySelector('tbody').innerHTML = mtrAggApi.renderTableHtml(rows, tableHeaderHtml);
-    renderStatusStrip();
-    renderEmptyState();
-}
-
-function initTable() {
-    $('output').querySelector('tbody').innerHTML = tableHeaderHtml;
-}
-
-function renderUi() {
-    renderStatusStrip();
-    renderNotice();
-    renderEmptyState();
-    renderRecentQueries();
-    renderSettingsSummaryPanel();
-    renderActionButtons();
-}
-
-function renderStatusStrip() {
-    var meta = uiStateApi.deriveTaskMeta(uiState.taskStatus, uiState.connectionStatus, uiState.rowsRendered);
-    $('taskStatusBadge').textContent = t(meta.labelKey);
-    $('taskStatusBadge').setAttribute('data-tone', meta.tone);
-    $('taskStatusDetail').textContent = t(meta.detailKey);
-    $('targetSummary').textContent = uiStateApi.formatTargetSummary(uiState.requestedTarget, uiState.resolvedTarget, t);
-    $('connectionSummary').textContent = t(uiStateApi.getConnectionStatusKey(uiState.connectionStatus));
-    renderStatusSummary();
-}
-
-function renderStatusSummary() {
-    var settings = readCurrentSettings();
-    var summary = uiStateApi.buildSettingsSummary(settings, t);
-    $('resolveModeSummary').textContent = t(uiStateApi.getResolveModeKey(settings.localResolve));
-    $('settingsSummaryInline').textContent = summary.join(' · ');
-}
-
-function renderNotice() {
-    var notice = $('noticeBanner');
-    var message = uiState.noticeKey !== '' ? t(uiState.noticeKey) : '';
-
-    if (uiState.noticeMessage !== '') {
-        message = message !== '' ? message + ' — ' + uiState.noticeMessage : uiState.noticeMessage;
-    }
-
-    if (!message) {
-        notice.hidden = true;
-        notice.textContent = '';
-        return;
-    }
-
-    notice.hidden = false;
-    notice.setAttribute('data-tone', uiState.noticeTone || 'info');
-    notice.textContent = message;
-}
-
-function renderEmptyState() {
-    var emptyState = uiStateApi.deriveEmptyState(
-        uiState.taskStatus,
-        uiState.connectionStatus,
-        uiState.rowsRendered > 0
-    );
-    var panel = $('resultEmptyState');
-
-    panel.hidden = !emptyState.visible;
-    panel.setAttribute('data-tone', emptyState.tone);
-    $('resultStateTitle').textContent = t(emptyState.titleKey);
-    $('resultStateText').textContent = t(emptyState.descriptionKey);
-}
-
-function renderRecentQueries() {
-    var container = $('recentQueries');
-    container.innerHTML = '';
-
-    if (!uiState.recentQueries.length) {
-        container.classList.add('chip-list-empty');
-        var emptyLabel = document.createElement('span');
-        emptyLabel.className = 'helper-empty';
-        emptyLabel.textContent = t('panel.history.empty');
-        container.appendChild(emptyLabel);
-        return;
-    }
-
-    container.classList.remove('chip-list-empty');
-    uiState.recentQueries.forEach(function (query) {
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'chip-button';
-        button.textContent = query;
-        button.setAttribute('data-recent-query', query);
-        container.appendChild(button);
-    });
-}
-
-function renderSettingsSummaryPanel() {
-    var container = $('settingsSummaryPanel');
-    var settings = readCurrentSettings();
-    var summaryItems = [
-        $('ipVersion').value.toUpperCase(),
-        $('protocol').value.toUpperCase()
-    ].concat(uiStateApi.buildSettingsSummary(settings, t));
-
-    container.innerHTML = '';
-    summaryItems.forEach(function (item) {
-        var chip = document.createElement('span');
-        chip.className = 'summary-chip';
-        chip.textContent = item;
-        container.appendChild(chip);
-    });
-}
-
-function renderActionButtons() {
-    var actionState = uiStateApi.deriveActionState(
-        uiState.connectionStatus,
-        uiState.taskStatus,
-        $('params').value
-    );
-
-    $('startBtn').disabled = actionState.startDisabled;
-    $('stopBtn').disabled = actionState.stopDisabled;
-    $('shareBtn').disabled = actionState.shareDisabled;
-    $('shareBtn').textContent = uiState.shareCopied ? t('action.shareCopied') : t('action.share');
 }
 
 function syncTargetPreview() {
@@ -661,139 +538,7 @@ function readBooleanFromLocalStorage(key, defaultValue) {
     return value === 'true';
 }
 
-function readCurrentSettings() {
-    return {
-        language: getValueFromLocalStorage('language') || $('language').value || 'cn',
-        intervalSeconds: getValueFromLocalStorage('intervalSeconds') || $('intervalTimeInput').value || '0.040',
-        packetSize: getValueFromLocalStorage('packetSize') || $('packetSizeInput').value || '52',
-        dataProvider: getValueFromLocalStorage('dataProvider') || $('dataProvider').value || '',
-        localResolve: readBooleanFromLocalStorage('localResolve', true)
-    };
-}
-
-function getFormattedSettings() {
-    var settings = {
-        ipVersion: $('ipVersion').value,
-        protocol: $('protocol').value,
-        language: getValueFromLocalStorage('language'),
-        intervalSeconds: getValueFromLocalStorage('intervalSeconds'),
-        packetSize: getValueFromLocalStorage('packetSize'),
-        maxHop: getValueFromLocalStorage('maxHop'),
-        minHop: getValueFromLocalStorage('minHop'),
-        port: getValueFromLocalStorage('port'),
-        dataProvider: getValueFromLocalStorage('dataProvider'),
-        device: getValueFromLocalStorage('device')
-    };
-
-    return JSON.stringify(settings);
-}
-
-function fetchWithTimeout(url, options, timeout) {
-    timeout = timeout || 3000;
-    return Promise.race([
-        fetch(url, options),
-        new Promise(function (_, reject) {
-            setTimeout(function () {
-                // resolveDomain swallows this to fall through to the next DoH endpoint,
-                // so it never reaches the user and stays an untranslated diagnostic.
-                reject(new Error('doh request timeout'));
-            }, timeout);
-        })
-    ]);
-}
-
-function resolveDomain(domain) {
-    return new Promise(function (resolve) {
-        var ipVersion = $('ipVersion').value;
-        var types = [];
-        if (ipVersion === 'ipv6') {
-            types = ['AAAA'];
-        } else if (ipVersion === 'all') {
-            types = ['AAAA', 'A'];
-        } else {
-            types = ['A'];
-        }
-
-        var resolvedAddresses = [];
-
-        function doResolve(dnsUrl) {
-            var promises = types.map(function (type) {
-                return fetchWithTimeout(dnsUrl + '?name=' + domain + '&type=' + type, {
-                    headers: { accept: 'application/dns-json' }
-                }, 3000)
-                    .then(function (response) {
-                        return response.json();
-                    })
-                    .then(function (data) {
-                        if (!data || !data.Answer) {
-                            return;
-                        }
-                        data.Answer.forEach(function (answer) {
-                            if (answer && answer.data) {
-                                resolvedAddresses.push(answer.data);
-                            }
-                        });
-                    });
-            });
-
-            return Promise.all(promises);
-        }
-
-        doResolve('https://cloudflare-dns.com/dns-query')
-            .catch(function () {
-                console.log('Cloudflare DoH failed, retrying with doh.sb');
-                return doResolve('https://doh.sb/dns-query');
-            })
-            .then(function () {
-                if (resolvedAddresses.length > 1) {
-                    showSelectionModal(t('modal.ipSelector.title'), resolvedAddresses, function (index) {
-                        resolve(resolvedAddresses[index]);
-                    }, function () {
-                        resolve(null);
-                    });
-                    return;
-                }
-                resolve(resolvedAddresses[0] || null);
-            })
-            .catch(function () {
-                resolve(null);
-            });
-    });
-}
-
-function parseDomain(domain) {
-    if ((domain.match(/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/)) || (domain.match(/^[a-fA-F0-9:]+$/))) {
-        return Promise.resolve(domain);
-    }
-
-    return new Promise(function (resolve) {
-        if (!domain || domain === '') {
-            resolve(null);
-            return;
-        }
-
-        if (domain.includes('/')) {
-            domain = domain.split('/')[2];
-        }
-
-        if (domain.includes(']')) {
-            domain = domain.split(']')[0].split('[')[1];
-        } else if (domain.includes(':') && (domain.match(/:/g) || []).length === 1) {
-            domain = domain.split(':')[0];
-        }
-
-        if (readBooleanFromLocalStorage('localResolve', true)) {
-            resolveDomain(domain).then(resolve);
-            return;
-        }
-
-        resolve(domain);
-    });
-}
-
-function isIpLiteral(value) {
-    return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(value) || /^[a-fA-F0-9:]+$/.test(value);
-}
+function readCurrentSettings() { return readSettings(); }
 
 function deviceValidateInput() {
     var allowedPattern = '^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,126}$';

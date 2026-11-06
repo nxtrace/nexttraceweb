@@ -36,9 +36,9 @@ test('resolveBasePath normalizes missing or relative input', () => {
 });
 
 test('joinBasePath builds sub-path aware endpoints', () => {
-  assert.equal(joinBasePath('/', 'socket.io'), '/socket.io');
+  assert.equal(joinBasePath('/', 'api/traces/task/events'), '/api/traces/task/events');
   assert.equal(joinBasePath('/', 'api/devices'), '/api/devices');
-  assert.equal(joinBasePath('/trace/', 'socket.io'), '/trace/socket.io');
+  assert.equal(joinBasePath('/trace/', 'api/traces/task/events'), '/trace/api/traces/task/events');
   assert.equal(joinBasePath('/trace/', 'api/devices'), '/trace/api/devices');
   assert.equal(joinBasePath('/trace/', '/api/devices'), '/trace/api/devices');
   assert.equal(joinBasePath('/trace/', ''), '/trace/');
@@ -140,7 +140,7 @@ test('every template asset reference points at a file that exists', () => {
 
 test('every script the page needs at parse time is loaded before its consumers', () => {
   const html = readRepoFile('templates/index.html');
-  const scriptPattern = /<script src="([^"]+)"/g;
+  const scriptPattern = /<script[^>]*src="([^"]+)"/g;
   const order = [];
   let match = scriptPattern.exec(html);
 
@@ -149,10 +149,9 @@ test('every script the page needs at parse time is loaded before its consumers',
     match = scriptPattern.exec(html);
   }
 
-  // main.js reads window.nextTracePaths/nextTraceI18n/nextTraceMTRAgg/nextTraceUIState at
+  // main.js reads the shared providers at
   // its top level, and settingsmenu.js reads window.nextTracePaths, so both must come last.
   const providers = [
-    'assets/js/socket.io.js',
     'assets/js/paths.js',
     'assets/js/i18n.js',
     'assets/js/mtr-agg.js',
@@ -185,7 +184,7 @@ test('the stylesheet font url resolves next to the stylesheet, not at the site r
 });
 
 test('browser scripts do not hardcode root-anchored endpoints', () => {
-  ['assets/js/main.js', 'assets/js/settingsmenu.js', 'assets/js/ui-state.js', 'assets/js/i18n.js']
+  ['assets/js/main.js', 'assets/js/trace-client.js', 'assets/js/settingsmenu.js', 'assets/js/ui-state.js', 'assets/js/i18n.js']
     .forEach((relativePath) => {
       const source = readRepoFile(relativePath);
       assert.equal(

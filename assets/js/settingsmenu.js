@@ -1,3 +1,4 @@
+import { readSettings, saveSettings } from './settings-store.js';
 var pathsApi = window.nextTracePaths;
 var settingBtn = document.getElementById('settingBtn');
 var settingMenu = document.getElementById('settingMenu');
@@ -60,15 +61,18 @@ saveBtn.addEventListener('click', function (event) {
         return;
     }
 
-    localStorage.setItem('language', document.getElementById('language').value);
-    localStorage.setItem('intervalSeconds', document.getElementById('intervalTimeInput').value);
-    localStorage.setItem('packetSize', document.getElementById('packetSizeInput').value);
-    localStorage.setItem('maxHop', document.getElementById('maxHopInput').value);
-    localStorage.setItem('minHop', document.getElementById('minHopInput').value);
-    localStorage.setItem('port', document.getElementById('portInput').value);
-    localStorage.setItem('device', document.getElementById('devInput').value);
-    localStorage.setItem('dataProvider', document.getElementById('dataProvider').value);
-    localStorage.setItem('localResolve', document.getElementById('localResolveCheckbox').checked);
+    saveSettings({
+        ...readSettings(),
+        language: document.getElementById('language').value,
+        intervalSeconds: intervalTimeInput.value,
+        packetSize: packetSizeInput.value,
+        maxHop: document.getElementById('maxHopInput').value,
+        minHop: document.getElementById('minHopInput').value,
+        port: document.getElementById('portInput').value,
+        device: document.getElementById('devInput').value,
+        dataProvider: document.getElementById('dataProvider').value,
+        localResolve: document.getElementById('localResolveCheckbox').checked
+    });
 
     closeSettingsMenu();
     notifySettingsChanged();
@@ -77,6 +81,9 @@ saveBtn.addEventListener('click', function (event) {
 document.addEventListener('DOMContentLoaded', async function () {
     loadStoredSettings();
     notifySettingsChanged();
+
+    var resumed = await window.resumeTrace();
+    if (resumed) return;
 
     var urlParams = new URLSearchParams(window.location.search);
     var trace = urlParams.get('trace');
@@ -127,46 +134,12 @@ function closeSettingsMenu() {
 }
 
 function loadStoredSettings() {
-    if (localStorage.getItem('localResolve') === null) {
-        localStorage.setItem('localResolve', true);
-    }
-    if (localStorage.getItem('protocol')) {
-        document.getElementById('protocol').value = localStorage.getItem('protocol');
-    }
-    if (localStorage.getItem('ipVersion')) {
-        document.getElementById('ipVersion').value = localStorage.getItem('ipVersion');
-    }
-    if (localStorage.getItem('language')) {
-        document.getElementById('language').value = localStorage.getItem('language');
-    }
-    if (localStorage.getItem('intervalSeconds')) {
-        var intervalSeconds = localStorage.getItem('intervalSeconds');
-        document.getElementById('intervalTimeInput').value = intervalSeconds;
-        document.getElementById('intervalTimeRange').value = intervalSeconds;
-    }
-    if (localStorage.getItem('packetSize')) {
-        var packetSize = localStorage.getItem('packetSize');
-        document.getElementById('packetSizeInput').value = packetSize;
-        document.getElementById('packetSizeRange').value = packetSize;
-    }
-    if (localStorage.getItem('maxHop')) {
-        document.getElementById('maxHopInput').value = localStorage.getItem('maxHop');
-    }
-    if (localStorage.getItem('minHop')) {
-        document.getElementById('minHopInput').value = localStorage.getItem('minHop');
-    }
-    if (localStorage.getItem('port')) {
-        document.getElementById('portInput').value = localStorage.getItem('port');
-    }
-    if (localStorage.getItem('device')) {
-        document.getElementById('devInput').value = localStorage.getItem('device');
-    }
-    if (localStorage.getItem('dataProvider')) {
-        document.getElementById('dataProvider').value = localStorage.getItem('dataProvider');
-    }
-    if (localStorage.getItem('localResolve')) {
-        document.getElementById('localResolveCheckbox').checked = localStorage.getItem('localResolve') === 'true';
-    }
+    var settings = readSettings();
+    var fields = {language:'language', intervalSeconds:'intervalTimeInput', packetSize:'packetSizeInput', maxHop:'maxHopInput', minHop:'minHopInput', port:'portInput', device:'devInput', dataProvider:'dataProvider'};
+    Object.keys(fields).forEach(function (key) { document.getElementById(fields[key]).value = settings[key]; });
+    intervalTimeRange.value = settings.intervalSeconds;
+    packetSizeRange.value = settings.packetSize;
+    document.getElementById('localResolveCheckbox').checked = settings.localResolve;
 }
 
 function loadAvailableDevices() {

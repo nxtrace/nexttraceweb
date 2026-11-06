@@ -68,8 +68,9 @@ start_processes() {
     render_nginx_config
 
     gunicorn \
+        --config /app/gunicorn.conf.py \
         --bind "${APP_HOST}:${APP_PORT}" \
-        --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker \
+        --worker-class gevent \
         --workers 1 \
         --access-logfile - \
         --error-logfile - \

@@ -23,7 +23,7 @@ NEXTTRACE项目派生的仓库，用于实现简易的NEXTTRACE WEB API服务端
 
 
 
-请注意，本项目使用了websocket作为通信协议，因此请在配置反代时参考仓库内的代码(本仓库提供的Docker Image 已内置 Nginx 反代)。
+任务控制使用 HTTP，结果使用 SSE。反代需关闭缓冲（`proxy_buffering off`）；Docker 镜像已内置该配置。
 
 Inspired by PING.PE
 
@@ -76,6 +76,7 @@ location /tools/nexttrace/ {
     proxy_set_header Host $http_host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
+    proxy_buffering off;
     proxy_pass http://127.0.0.1:30080/;
 }
 ```
@@ -117,7 +118,14 @@ server {
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
         proxy_pass http://127.0.0.1:30080;
     }
 }
 ```
+
+## 任务通信
+
+要求支持 `--mtr --json` 的 NextTrace v1.7.5 或后续兼容版本。HTTP 创建和停止任务，SSE 发送完整统计快照；刷新后根据 sessionStorage 续接任务。页面每 10 秒续租，连续 30 秒未续租停止任务；终态任务及请求去重记录保留 5 分钟。继续使用单个 Gunicorn gevent worker，任务仅保存在内存中，服务重启后不恢复。新配置默认同一跳两次发送相隔 1 秒，各跳独立推进；已有间隔保持原样。页面显示与执行参数使用同一有效配置。
+
+Docker 构建会将 `NEXTTRACE_ASSET_PREFIX` 记为 `NTWA_NEXTTRACE_FLAVOR`：MTR 专用的 `ntr` 使用 `--json`，`nexttrace` 与 `nexttrace-tiny` 使用 `--mtr --json`。Docker 外自定义二进制时按实际 flavor 设置该变量，默认 `nexttrace`。

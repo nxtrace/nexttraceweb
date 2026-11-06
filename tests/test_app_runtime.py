@@ -1,414 +1,296 @@
 import os
+os.environ.setdefault('NTWA_ASYNC_MODE', 'threading')
 
-os.environ.setdefault("NTWA_SOCKETIO_ASYNC_MODE", "threading")
-
+import io
+import json
 import sys
-import time
+import subprocess
+import tempfile
+import runpy
 import types
+from pathlib import Path
+import time
 import unittest
 from unittest import mock
 
 import app as app_module
+from ntwa.config import PayloadError, build_trace_params, normalize_target
+from ntwa.tasks import Registry, Task, TERMINAL
 
 
-class FakePipe:
-    def __init__(self, lines=None):
-        self.lines = list(lines or [])
-        self.closed = False
-
-    def readline(self):
-        if self.closed:
-            raise ValueError("I/O operation on closed file")
-        if not self.lines:
-            return ""
-        return self.lines.pop(0)
-
-    def close(self):
-        self.closed = True
+def events(*items):
+    return ''.join(json.dumps(dict(schema_version=1, seq=index, **item)) + '\n' for index, item in enumerate(items, 1))
 
 
-class FakeStdin:
-    def __init__(self):
-        self.buffer = []
-        self.closed = False
+class FakeProcess:
+    def __init__(self, output='', stderr='', code=0):
+        self.stdout = io.StringIO(output)
+        self.stderr = io.StringIO(stderr)
+        self.returncode = code
+        self.terminate = mock.Mock()
+        self.kill = mock.Mock()
+        self.wait = mock.Mock(return_value=code)
 
-    def write(self, data):
-        if self.closed:
-            raise OSError("stdin is closed")
-        self.buffer.append(data)
-
-    def flush(self):
-        if self.closed:
-            raise OSError("stdin is closed")
-
-    def close(self):
-        self.closed = True
-
-
-class FakePopen:
-    stdout_lines = []
-    stderr_lines = []
-    returncode = 0
-    instances = []
-
-    def __init__(self, cmd, **kwargs):
-        self.cmd = cmd
-        self.kwargs = kwargs
-        self.stdout = FakePipe(type(self).stdout_lines)
-        self.stderr = FakePipe(type(self).stderr_lines)
-        self.stdin = FakeStdin()
-        self.returncode = type(self).returncode
-        type(self).instances.append(self)
-
-    @classmethod
-    def configure(cls, stdout_lines=None, stderr_lines=None, returncode=0):
-        cls.stdout_lines = list(stdout_lines or [])
-        cls.stderr_lines = list(stderr_lines or [])
-        cls.returncode = returncode
-        cls.instances = []
-
-    def wait(self, timeout=None):
-        self.stdout.close()
-        self.stderr.close()
+    def poll(self):
         return self.returncode
-
-    def terminate(self):
-        self.stdout.close()
-        self.stderr.close()
-
-    def kill(self):
-        self.returncode = -9
-        self.stdout.close()
-        self.stderr.close()
 
 
 class AppRuntimeTests(unittest.TestCase):
     def setUp(self):
-        self.pending_packets = []
-        self.original_config = {
-            "NTWA_NEXTTRACE_PATH": app_module.app.config["NTWA_NEXTTRACE_PATH"],
-            "NTWA_TRACE_IDLE_TIMEOUT_SECONDS": app_module.app.config["NTWA_TRACE_IDLE_TIMEOUT_SECONDS"],
-            "NTWA_TRACE_MAX_DURATION_SECONDS": app_module.app.config["NTWA_TRACE_MAX_DURATION_SECONDS"],
-            "NTWA_MAX_ACTIVE_TRACES": app_module.app.config["NTWA_MAX_ACTIVE_TRACES"],
-            "NTWA_MIN_START_INTERVAL_SECONDS": app_module.app.config["NTWA_MIN_START_INTERVAL_SECONDS"],
-            "NTWA_TRUSTED_HOSTS": app_module.app.config["NTWA_TRUSTED_HOSTS"],
-        }
-        with app_module.clients_lock:
-            app_module.clients.clear()
-            app_module.client_last_start.clear()
-        app_module.app.config.update(
-            NTWA_NEXTTRACE_PATH="/usr/local/bin/nexttrace",
-            NTWA_TRACE_IDLE_TIMEOUT_SECONDS=120.0,
-            NTWA_TRACE_MAX_DURATION_SECONDS=0.0,
-            NTWA_MAX_ACTIVE_TRACES=64,
-            NTWA_MIN_START_INTERVAL_SECONDS=0.0,
-            NTWA_TRUSTED_HOSTS=(),
-        )
-        self.flask_client = app_module.app.test_client()
-        self.socket_client = app_module.socketio.test_client(
-            app_module.app, flask_test_client=self.flask_client
-        )
+        self.app = app_module.app
+        self.config = self.app.config.copy()
+        self.app.config.update(NTWA_NEXTTRACE_PATH=sys.executable, NTWA_MIN_START_INTERVAL_SECONDS=0, NTWA_MAX_ACTIVE_TRACES=64, NTWA_TRUSTED_HOSTS=())
+        # register_routes closes over this registry, so clear its in-memory state.
+        self.registry = self.app.extensions['traces']
+        self.registry.tasks.clear()
+        self.registry.requests.clear()
+        self.registry.last_start.clear()
+        self.client = self.app.test_client()
+        self.start = mock.patch.object(Task, 'start').start()
 
     def tearDown(self):
-        if self.socket_client.is_connected():
-            self.socket_client.disconnect()
-        app_module.app.config.update(**self.original_config)
-        with app_module.clients_lock:
-            app_module.clients.clear()
-            app_module.client_last_start.clear()
+        mock.patch.stopall()
+        self.registry.tasks.clear()
+        self.registry.requests.clear()
+        self.registry.last_start.clear()
+        self.app.config.update(self.config)
 
-    def _get_event(self, event_name, timeout=1.0):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            self.pending_packets.extend(self.socket_client.get_received())
-            for index, packet in enumerate(self.pending_packets):
-                if packet["name"] == event_name:
-                    return self.pending_packets.pop(index)
-            time.sleep(0.01)
-        self.fail(f"Timed out waiting for {event_name}")
+    def create(self, request_id='request-one', **kwargs):
+        return self.client.post('/api/traces', json=dict(ip='192.0.2.1', request_id=request_id, extra={}, **kwargs))
 
-    def test_parse_client_payload_accepts_url_and_empty_extra(self):
-        target, extra = app_module.parse_client_payload(
-            {"ip": "https://example.com:443/path", "extra": ""}
-        )
+    def test_parameters_keep_interval_units_and_saved_40ms(self):
+        params = build_trace_params('192.0.2.1', dict(intervalSeconds='0.040', protocol='tcp', packetSize='128', device='br-test0'))
+        self.assertEqual(params[params.index('--ttl-time') + 1], '40')
+        self.assertIn('--tcp', params)
+        self.assertEqual(normalize_target('https://example.com:443/path'), 'example.com')
+        with self.assertRaises(PayloadError):
+            build_trace_params('192.0.2.1', dict(device='eth0;echo bad'))
 
-        self.assertEqual(target, "example.com")
-        self.assertEqual(extra, {})
+    def test_create_defaults_to_one_second_and_retries_do_not_launch_again(self):
+        first = self.create()
+        second = self.create()
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.get_json()['task_id'], first.get_json()['task_id'])
+        self.start.assert_called_once()
+        task = self.registry.tasks[first.get_json()['task_id']]
+        self.assertEqual(task.params[task.params.index('--ttl-time') + 1], '1000')
+        mismatch = self.client.post('/api/traces', json=dict(ip='192.0.2.2', request_id='request-one', extra={}))
+        self.assertEqual(mismatch.status_code, 400)
 
-    def test_parse_client_payload_accepts_ipv6_literal(self):
-        target, extra = app_module.parse_client_payload({"ip": "2001:db8::1", "extra": {}})
+    def test_ownership_protects_status_stop_lease_and_stream(self):
+        task_id = self.create().get_json()['task_id']
+        other = self.app.test_client()
+        for suffix, method in [('', 'get'), ('/stop', 'post'), ('/lease', 'post'), ('/events', 'get')]:
+            with self.subTest(suffix=suffix):
+                self.assertEqual(getattr(other, method)('/api/traces/' + task_id + suffix).status_code, 404)
+        self.assertEqual(self.client.get('/api/traces/' + task_id).status_code, 200)
 
-        self.assertEqual(target, "2001:db8::1")
-        self.assertEqual(extra, {})
+    def test_lease_refresh_and_stop_before_start_does_not_spawn(self):
+        task_id = self.create().get_json()['task_id']
+        task = self.registry.tasks[task_id]
+        task.lease_at = 0
+        self.assertEqual(self.client.post('/api/traces/' + task_id + '/lease').status_code, 200)
+        self.assertGreater(task.lease_at, 0)
+        self.assertEqual(self.client.post('/api/traces/' + task_id + '/stop').status_code, 200)
+        self.assertEqual(self.client.post('/api/traces/' + task_id + '/stop').status_code, 200)
+        with mock.patch('ntwa.tasks.subprocess.Popen') as popen:
+            task.run()
+        popen.assert_not_called()
+        self.assertEqual(task.state, 'cancelled')
 
-    def test_build_trace_params_maps_supported_fields(self):
-        params = app_module.build_trace_params(
-            "example.com",
-            {
-                "ipVersion": "ipv6",
-                "protocol": "tcp",
-                "language": "en",
-                "intervalSeconds": "0.04",
-                "packetSize": "128",
-                "maxHop": "8",
-                "minHop": "2",
-                "port": "443",
-                "device": "en0",
-                "dataProvider": "LeoMoeAPI",
-            },
-        )
+    def test_limits_remain_enforced_and_capacity_releases_on_terminal(self):
+        self.app.config['NTWA_MAX_ACTIVE_TRACES'] = 1
+        task_id = self.create().get_json()['task_id']
+        limited = self.create('request-two')
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited.get_json()['code'], 'trace_capacity_exceeded')
+        self.registry.tasks[task_id].change('completed')
+        self.assertEqual(self.create('request-two').status_code, 201)
+        self.app.config['NTWA_MIN_START_INTERVAL_SECONDS'] = 60
+        self.assertEqual(self.create('request-three').get_json()['code'], 'trace_rate_limited')
 
-        self.assertEqual(
-            params,
-            [
-                "example.com",
-                "--ipv6",
-                "--tcp",
-                "--language",
-                "en",
-                "--ttl-time",
-                "40",
-                "--psize",
-                "128",
-                "--max-hops",
-                "8",
-                "--first",
-                "2",
-                "--port",
-                "443",
-                "--dev",
-                "en0",
-                "--data-provider",
-                "LeoMoeAPI",
-            ],
-        )
+    def test_resolve_returns_addresses_without_creating_process(self):
+        replies = [(2, 2, 17, '', ('192.0.2.1', 0)), (2, 2, 17, '', ('192.0.2.1', 0)), (2, 2, 17, '', ('192.0.2.2', 0))]
+        with mock.patch('ntwa.http.socket.getaddrinfo', return_value=replies):
+            response = self.client.post('/api/traces/resolve', json=dict(target='https://example.com/path', ipVersion='ipv4'))
+        self.assertEqual(response.get_json()['addresses'], ['192.0.2.1', '192.0.2.2'])
+        self.assertFalse(self.registry.tasks)
+        self.start.assert_not_called()
 
-    def test_build_trace_params_rejects_invalid_device(self):
-        with self.assertRaises(app_module.PayloadError) as ctx:
-            app_module.build_trace_params("example.com", {"device": "en0;rm -rf /"})
+    def test_malformed_requests_and_cross_origin_controls_are_rejected(self):
+        self.assertEqual(self.client.post('/api/traces', data='{bad json', content_type='application/json').status_code, 400)
+        self.assertEqual(self.client.post('/api/traces', json=dict(ip='example.com', request_id='x')).status_code, 400)
+        response = self.client.post('/api/traces', json={}, headers={'Origin': 'https://other.example'})
+        self.assertEqual(response.status_code, 403)
+        self.app.config['NTWA_TRUSTED_HOSTS'] = ('trace.example',)
+        self.assertEqual(self.client.get('/healthz').status_code, 400)
 
-        self.assertEqual(ctx.exception.code, "invalid_payload")
+    def test_health_and_devices_keep_existing_contract(self):
+        self.assertTrue(self.client.get('/healthz').get_json()['nexttrace_available'])
+        self.app.config['NTWA_NEXTTRACE_PATH'] = '/missing/nexttrace'
+        self.assertEqual(self.client.get('/healthz').status_code, 503)
+        with mock.patch('ntwa.http.socket.if_nameindex', return_value=[(1, 'lo0'), (2, 'br-test0'), (3, 'bad name')]):
+            self.assertEqual(self.client.get('/api/devices').get_json(), dict(devices=['lo0', 'br-test0'], count=2))
 
-    def test_build_trace_params_accepts_detected_device_name(self):
-        params = app_module.build_trace_params("example.com", {"device": "br-test0"})
+    def test_sse_reconnect_sends_latest_terminal_snapshot_without_restarting(self):
+        task_id = self.create().get_json()['task_id']
+        task = self.registry.tasks[task_id]
+        task.aggregate.ingest(dict(ttl=1, success=True, rtt_ms=0, ip='192.0.2.1'))
+        task.change('completed')
+        for _ in range(2):
+            response = self.client.get('/api/traces/' + task_id + '/events', buffered=True)
+            self.assertEqual(response.mimetype, 'text/event-stream')
+            self.assertEqual(response.headers['X-Accel-Buffering'], 'no')
+            snapshot = json.loads(next(line[6:] for line in response.get_data(as_text=True).splitlines() if line.startswith('data: ')))
+            self.assertEqual(snapshot['task_id'], task_id)
+            self.assertEqual(snapshot['state'], 'completed')
+            self.assertEqual(snapshot['rows'][0]['sent'], 1)
+        self.start.assert_called_once()
 
-        self.assertEqual(params, ["example.com", "--dev", "br-test0"])
+    def test_retention_removes_terminal_task_and_request_id_after_five_minutes(self):
+        task_id = self.create().get_json()['task_id']
+        task = self.registry.tasks[task_id]
+        task.change('completed')
+        task.finished_at = time.monotonic() - 301
+        self.assertEqual(self.client.get('/api/traces/' + task_id).status_code, 404)
+        self.assertFalse(self.registry.requests)
 
-    def test_healthz_reports_ok_when_binary_exists(self):
-        app_module.app.config["NTWA_NEXTTRACE_PATH"] = sys.executable
 
-        response = self.flask_client.get("/healthz")
+class TaskRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.config = dict(NTWA_NEXTTRACE_PATH='/fake/nexttrace', NTWA_TRACE_IDLE_TIMEOUT_SECONDS=120, NTWA_TRACE_MAX_DURATION_SECONDS=0)
 
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.get_json()["nexttrace_available"])
+    def task(self):
+        return Task('owner-one', ['192.0.2.1'], self.config)
 
-    def test_healthz_reports_degraded_when_binary_missing(self):
-        app_module.app.config["NTWA_NEXTTRACE_PATH"] = "/definitely/missing/nexttrace"
+    def test_completion_flushes_last_probe_and_stops_watchdog(self):
+        task = self.task()
+        output = events(dict(type='start'), dict(type='probe', record=dict(ttl=1, success=True, rtt_ms=0)), dict(type='end', end_reason='completed'))
+        process = FakeProcess(output)
+        with mock.patch('ntwa.tasks.subprocess.Popen', return_value=process) as popen:
+            task.run()
+        self.assertEqual(task.state, 'completed')
+        self.assertTrue(task.done.is_set())
+        self.assertEqual(task.snapshot()['rows'][0]['successCount'], 1)
+        self.assertEqual(popen.call_args.args[0][-2:], ['--mtr', '--json'])
+        seq = task.seq
+        task.last_output_at = 0
+        task.watch()
+        task.change('failed', dict(message='late error'))
+        self.assertEqual(task.state, 'completed')
+        self.assertEqual(task.seq, seq)
+        self.assertIsNone(task.error)
 
-        response = self.flask_client.get("/healthz")
+    def test_native_error_keeps_partial_results_and_structured_details(self):
+        task = self.task()
+        output = events(dict(type='start'), dict(type='probe', record=dict(ttl=2, success=True, rtt_ms=12)), dict(type='end', end_reason='error', error=dict(stage='probe', message='probe failed')))
+        with mock.patch('ntwa.tasks.subprocess.Popen', return_value=FakeProcess(output, code=1)):
+            task.run()
+        self.assertEqual(task.state, 'failed')
+        self.assertEqual(task.error['message'], 'probe failed')
+        self.assertEqual(task.snapshot()['rows'][0]['sent'], 1)
 
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.get_json()["status"], "degraded")
+    def test_empty_stdout_uses_stderr_instead_of_false_completion(self):
+        task = self.task()
+        with mock.patch('ntwa.tasks.subprocess.Popen', return_value=FakeProcess(stderr='unknown argument --json\n', code=2)):
+            task.run()
+        self.assertEqual(task.state, 'failed')
+        self.assertIn('--json', task.error['message'])
 
-    @mock.patch.object(app_module.socket_module, "if_nameindex", return_value=[(1, "lo0"), (2, "br-test0"), (3, "bad name")])
-    def test_api_devices_returns_filtered_detected_interfaces(self, _if_nameindex):
-        response = self.flask_client.get("/api/devices")
+    def test_invalid_event_order_fails_instead_of_aggregating_twice(self):
+        task = self.task()
+        output = events(dict(type='start')) + json.dumps(dict(schema_version=1, seq=1, type='probe', record=dict(ttl=1, success=True, rtt_ms=1))) + '\n'
+        with mock.patch('ntwa.tasks.subprocess.Popen', return_value=FakeProcess(output)):
+            task.run()
+        self.assertEqual(task.state, 'failed')
+        self.assertFalse(task.snapshot()['rows'])
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"devices": ["lo0", "br-test0"], "count": 2})
-
-    def test_start_nexttrace_invalid_json_emits_structured_error(self):
-        self.socket_client.emit("start_nexttrace", "{bad json")
-
-        packet = self._get_event("nexttrace_error")
-        self.assertEqual(packet["args"][0]["code"], "invalid_payload")
-
-    def test_start_nexttrace_missing_ip_emits_structured_error(self):
-        self.socket_client.emit("start_nexttrace", {"extra": {}})
-
-        packet = self._get_event("nexttrace_error")
-        self.assertEqual(packet["args"][0]["code"], "invalid_payload")
-
-    def test_start_nexttrace_rate_limit_emits_retry_after(self):
-        with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None):
-            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
-            app_module.app.config["NTWA_MIN_START_INTERVAL_SECONDS"] = 60.0
-            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
-
-        packet = self._get_event("nexttrace_error")
-        self.assertEqual(packet["args"][0]["code"], "trace_rate_limited")
-        self.assertIn("retry_after_seconds", packet["args"][0])
-
-    def test_start_nexttrace_capacity_limit_emits_error(self):
-        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
-        with app_module.clients_lock:
-            app_module.clients["another-sid"] = object()
-
-        self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
-
-        packet = self._get_event("nexttrace_error")
-        self.assertEqual(packet["args"][0]["code"], "trace_capacity_exceeded")
-
-    def test_replacement_rechecks_capacity_after_old_task_cleanup(self):
-        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
-        other_client = app_module.socketio.test_client(app_module.app)
+    def test_cleanup_error_does_not_skip_terminal_state_or_other_pipe(self):
+        task = self.task()
+        output = events(dict(type='start'), dict(type='end', end_reason='completed'))
+        process = FakeProcess(output)
+        original_close = process.stdout.close
+        process.stdout.close = mock.Mock(side_effect=OSError('close failed'))
         try:
-            with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None) as start:
-                self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1"})
-                sid, old_task = next(iter(app_module.clients.items()))
-
-                def stop_old_task():
-                    app_module.cleanup_client_state(sid, task=old_task)
-                    other_client.emit("start_nexttrace", {"ip": "8.8.8.8"})
-
-                old_task.request_stop = mock.Mock(side_effect=stop_old_task)
-                self.socket_client.emit("start_nexttrace", {"ip": "9.9.9.9"})
-
-                self.assertEqual(len(app_module.clients), 1)
-                self.assertEqual(start.call_count, 2)
-                self.assertNotIn(sid, app_module.clients)
-                packet = self._get_event("nexttrace_error")
-                self.assertEqual(packet["args"][0]["code"], "trace_capacity_exceeded")
-        finally:
-            other_client.disconnect()
-
-    def test_new_sessions_recheck_capacity_before_registration(self):
-        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
-        other_client = app_module.socketio.test_client(app_module.app)
-        original_enforce = app_module.enforce_start_limits
-        interleaved = False
-
-        def interleave_start(sid):
-            nonlocal interleaved
-            original_enforce(sid)
-            if not interleaved:
-                interleaved = True
-                other_client.emit("start_nexttrace", {"ip": "8.8.8.8"})
-
-        try:
-            with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None) as start:
-                with mock.patch.object(app_module, "enforce_start_limits", side_effect=interleave_start):
-                    self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1"})
-
-                self.assertEqual(len(app_module.clients), 1)
-                self.assertEqual(start.call_count, 1)
-                packet = self._get_event("nexttrace_error")
-                self.assertEqual(packet["args"][0]["code"], "trace_capacity_exceeded")
-        finally:
-            other_client.disconnect()
-
-    def test_replacement_at_capacity_preserves_new_task_on_stale_cleanup(self):
-        app_module.app.config["NTWA_MAX_ACTIVE_TRACES"] = 1
-        with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None) as start:
-            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1"})
-            sid, old_task = next(iter(app_module.clients.items()))
-            old_task.request_stop = mock.Mock()
-            self.socket_client.emit("start_nexttrace", {"ip": "8.8.8.8"})
-            new_task = app_module.clients[sid]
-            app_module.cleanup_client_state(sid, task=old_task)
-
-        self.assertIsNot(new_task, old_task)
-        self.assertIs(app_module.clients[sid], new_task)
-        self.assertEqual(start.call_count, 2)
-        old_task.request_stop.assert_called_once_with()
-
-    def test_stopped_pending_task_does_not_launch_a_process(self):
-        task = app_module.TraceTask("pending-sid", ["1.1.1.1"], "/usr/local/bin/nexttrace")
-        task.request_stop()
-        FakePopen.configure()
-        with mock.patch.object(app_module.subprocess, "Popen", side_effect=FakePopen) as popen:
-            with mock.patch.object(app_module.socketio, "emit") as emit:
+            with mock.patch('ntwa.tasks.subprocess.Popen', return_value=process):
                 task.run()
+        finally:
+            process.stdout.close = original_close
+            original_close()
+        self.assertTrue(task.done.is_set())
+        self.assertIn(task.state, TERMINAL)
+        self.assertTrue(process.stderr.closed)
 
-        self.assertEqual(popen.call_count, 0)
-        emit.assert_called_once_with("nexttrace_complete", room="pending-sid")
+    def test_thread_start_failure_does_not_keep_active_capacity(self):
+        registry = Registry(dict(self.config, NTWA_MIN_START_INTERVAL_SECONDS=0, NTWA_MAX_ACTIVE_TRACES=1))
+        with mock.patch.object(Task, 'start', side_effect=RuntimeError('cannot start new thread')):
+            with self.assertRaises((RuntimeError, PayloadError)):
+                registry.create('owner-one', 'request-one', ['192.0.2.1'])
+        self.assertFalse(any(task.state not in TERMINAL for task in registry.tasks.values()))
 
-    def test_start_nexttrace_emits_mtr_raw_and_complete(self):
-        FakePopen.configure(
-            stdout_lines=[
-                "1|1.1.1.1|one.one.one.one|10.50|13335|Australia|Queensland|South Brisbane||Cloudflare|0|0\n",
-                "2|*||||||||||\n",
-            ]
-        )
+    def test_lease_renewal_between_watch_check_and_stop_prevents_cancellation(self):
+        task = self.task()
+        task.process = FakeProcess()
+        task.lease_at = 0
+        original_stop = task.stop
 
-        with mock.patch.object(app_module.subprocess, "Popen", FakePopen):
-            self.socket_client.emit(
-                "start_nexttrace",
-                {
-                    "ip": "1.1.1.1",
-                    "extra": {"ipVersion": "ipv4", "protocol": "udp", "intervalSeconds": "0.04"},
-                },
-            )
-            raw_packet = self._get_event("mtr_raw")
-            complete_packet = self._get_event("nexttrace_complete")
+        def renew_then_stop(*args, **kwargs):
+            with task.condition:
+                task.lease_at = time.monotonic()
+            return original_stop(*args, **kwargs)
 
-        self.assertEqual(raw_packet["args"][0]["ttl"], 1)
-        self.assertEqual(raw_packet["args"][0]["ip"], "1.1.1.1")
-        self.assertEqual(complete_packet["name"], "nexttrace_complete")
-        self.assertTrue(FakePopen.instances)
-        self.assertIn("--raw", FakePopen.instances[0].cmd)
-        self.assertNotIn("-q", FakePopen.instances[0].cmd)
-        self.assertNotIn("--send-time", FakePopen.instances[0].cmd)
-        self.assertNotIn("--mtr", FakePopen.instances[0].cmd)
-        self.assertNotIn("--map", FakePopen.instances[0].cmd)
+        with mock.patch.object(task.done, 'wait', side_effect=[False, True]):
+            with mock.patch.object(task, 'stop', side_effect=renew_then_stop):
+                task.watch()
+        self.assertFalse(task.stopping.is_set())
+        task.process.terminate.assert_not_called()
 
-    def test_start_nexttrace_emits_error_for_stdout_usage_failure(self):
-        FakePopen.configure(
-            stdout_lines=[
-                "usage: ntr [TARGET]\n",
-            ]
-        )
+    def test_worker_exit_hook_reaps_real_native_child_and_rejects_new_tasks(self):
+        with tempfile.TemporaryDirectory(prefix='ntwa-native-test-') as folder:
+            binary = Path(folder) / 'native.py'
+            binary.write_text('import json,time\nprint(json.dumps(dict(schema_version=1, seq=1, type="start")),flush=True)\ntime.sleep(3600)\n')
+            config = dict(self.config, NTWA_NEXTTRACE_PATH=sys.executable, NTWA_MIN_START_INTERVAL_SECONDS=0, NTWA_MAX_ACTIVE_TRACES=1)
+            registry = Registry(config)
+            task = registry.create('owner-one', 'request-one', [str(binary)])
+            try:
+                deadline = time.monotonic() + 3
+                while task.state == 'starting' and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertEqual(task.state, 'running')
+                self.assertIsNone(task.process.poll())
+                hook = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'gunicorn.conf.py'))['worker_exit']
+                worker = types.SimpleNamespace(wsgi=types.SimpleNamespace(extensions={'traces': registry}))
+                hook(None, worker)
+                self.assertIsNotNone(task.process.poll())
+                self.assertTrue(task.done.wait(1))
+                self.assertEqual(task.state, 'cancelled')
+                with self.assertRaises(PayloadError):
+                    registry.create('owner-one', 'request-two', ['192.0.2.2'])
+            finally:
+                registry.shutdown()
+                if task.process is not None and task.process.poll() is None:
+                    task.process.kill()
+                    task.process.wait(timeout=2)
 
-        with mock.patch.object(app_module.subprocess, "Popen", FakePopen):
-            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
-            error_packet = self._get_event("nexttrace_error")
-            complete_packet = self._get_event("nexttrace_complete")
+    def test_stop_escalates_after_two_seconds_and_reaps_process(self):
+        task = self.task()
+        task.process = FakeProcess()
+        task.process.wait.side_effect = [subprocess.TimeoutExpired('nexttrace', 2), 0]
+        task.stop()
+        task.process.terminate.assert_called_once()
+        task.process.kill.assert_called_once()
+        self.assertEqual(task.process.wait.call_args_list, [mock.call(timeout=2), mock.call()])
 
-        self.assertEqual(error_packet["args"][0]["code"], "nexttrace_invalid_args")
-        self.assertEqual(error_packet["args"][0]["message"], "usage: ntr [TARGET]")
-        self.assertEqual(complete_packet["name"], "nexttrace_complete")
-
-    def test_stop_nexttrace_calls_request_stop(self):
-        with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None):
-            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
-        sid, task = next(iter(app_module.clients.items()))
-        task.request_stop = mock.Mock()
-
-        self.socket_client.emit("stop_nexttrace")
-
-        task.request_stop.assert_called_once_with()
-        self.assertEqual(sid, next(iter(app_module.clients)))
-
-    def test_nexttrace_options_choice_without_running_task_emits_error(self):
-        self.socket_client.emit("nexttrace_options_choice", {"choice": 1})
-
-        packet = self._get_event("nexttrace_error")
-        self.assertEqual(packet["args"][0]["code"], "trace_not_running")
-
-    def test_nexttrace_options_choice_writes_to_task_stdin(self):
-        with mock.patch.object(app_module.TraceTask, "start", autospec=True, return_value=None):
-            self.socket_client.emit("start_nexttrace", {"ip": "1.1.1.1", "extra": {}})
-
-        _, task = next(iter(app_module.clients.items()))
-        task.process = types.SimpleNamespace(stdin=FakeStdin())
-
-        self.socket_client.emit("nexttrace_options_choice", {"choice": 2})
-
-        self.assertEqual(task.process.stdin.buffer, ["2\n"])
-
-    def test_emit_complete_is_idempotent(self):
-        with mock.patch.object(app_module.socketio, "emit") as emit_mock:
-            task = app_module.TraceTask("sid-1", ["1.1.1.1"], "/usr/local/bin/nexttrace")
-            with app_module.clients_lock:
-                app_module.clients["sid-1"] = task
-            task.emit_complete()
-            task.emit_complete()
-
-        self.assertEqual(
-            emit_mock.call_args_list,
-            [mock.call("nexttrace_complete", room="sid-1")],
-        )
+    def test_expired_lease_cancels_task_and_stop_is_idempotent(self):
+        task = self.task()
+        task.process = FakeProcess()
+        task.lease_at = 0
+        with mock.patch.object(task.done, 'wait', return_value=False):
+            task.watch()
+        self.assertTrue(task.stopping.is_set())
+        task.stop()
+        task.process.terminate.assert_called_once()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

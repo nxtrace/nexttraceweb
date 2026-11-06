@@ -8,7 +8,8 @@ ARG TARGETARCH
 ARG NEXTTRACE_RELEASE_TAG
 ARG NEXTTRACE_ASSET_PREFIX
 
-ENV PYTHONUNBUFFERED=1 \
+ENV NTWA_NEXTTRACE_FLAVOR=${NEXTTRACE_ASSET_PREFIX} \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && \
@@ -27,6 +28,8 @@ RUN python /tmp/download_nexttrace.py && \
 
 WORKDIR /app
 COPY app.py /app/app.py
+COPY gunicorn.conf.py /app/gunicorn.conf.py
+COPY ntwa /app/ntwa
 COPY nexttrace_mtr.py /app/nexttrace_mtr.py
 COPY templates /app/templates
 COPY assets /app/assets

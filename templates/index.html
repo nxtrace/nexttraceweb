@@ -5,13 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="assets/css/m.css" type="text/css">
-    <script src="assets/js/socket.io.js" defer></script>
     <script src="assets/js/paths.js" defer></script>
     <script src="assets/js/i18n.js" defer></script>
     <script src="assets/js/mtr-agg.js" defer></script>
     <script src="assets/js/ui-state.js" defer></script>
-    <script src="assets/js/main.js" defer></script>
-    <script src="assets/js/settingsmenu.js" defer></script>
+    <script type="module" src="assets/js/main.js"></script>
+    <script type="module" src="assets/js/settingsmenu.js"></script>
 </head>
 <body>
 <div class="page-shell">
@@ -223,8 +222,8 @@
         <label class="field field-span-2" for="intervalTimeSlider">
             <span class="field-label" data-i18n="settings.interval.label">Probe Interval Seconds</span>
             <div id="intervalTimeSlider" class="range-pair">
-                <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="0.040">
-                <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="0.040">
+                <input type="range" id="intervalTimeRange" min="0.005" max="1" step="0.001" value="1.000">
+                <input type="number" id="intervalTimeInput" min="0.005" max="1" step="0.001" value="1.000">
             </div>
         </label>
 

@@ -20,7 +20,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
-RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt && \
+    python -m pip check && \
+    python -m pip uninstall -y pip && \
+    rm -rf /usr/local/lib/python3.14/ensurepip /tmp/requirements.txt
 
 COPY docker/download_nexttrace.py /tmp/download_nexttrace.py
 COPY docker/nexttrace-checksums.json /tmp/nexttrace-checksums.json

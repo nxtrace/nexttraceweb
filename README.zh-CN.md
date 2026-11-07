@@ -47,11 +47,62 @@ docker run -d --name ntwa --restart unless-stopped \
 
 镜像以 UID `10001` 运行，只有 NextTrace 可执行文件持有 `NET_RAW`。不需要 `--privileged` 或 `NET_ADMIN`；不要添加会阻止文件能力生效的 `no-new-privileges`。host 网络用于保留探测节点的实际路由。
 
-镜像后的参数决定监听地址：`127.0.0.1:30080` 仅本机，`30080` 监听所有 IPv4 / IPv6 地址，`'[::1]:30080'` 仅 IPv6 本机。使用非特权端口；默认健康检查访问 `30080`，更换端口时需同步覆盖健康检查命令。
+镜像后的参数决定监听地址：`127.0.0.1:30080` 仅本机，`30080` 监听所有 IPv4 / IPv6 地址，`'[::1]:30080'` 仅 IPv6 本机。使用非特权端口；内置健康检查通过容器内 Unix socket 访问应用，无需随端口、HTTPS、认证或二级路径调整。
+
+## 容器部署参数
+
+可直接使用容器内置的 HTTPS、访问认证和二级路径，无需另配 Nginx。以下命令使用已有证书和快速开始中生成的 `.env`：
+
+```bash
+mkdir -p secrets
+read -rsp '访问密码：' NTWA_PASSWORD; printf '\n'
+(umask 077; printf '%s\n' "$NTWA_PASSWORD" > secrets/password)
+unset NTWA_PASSWORD
+sudo chown 10001:10001 secrets/password
+sudo chmod 0400 secrets/password
+
+docker run -d --name ntwa --restart unless-stopped \
+  --network host --cap-drop ALL --cap-add NET_RAW \
+  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+  --memory 512m --cpus 1 --pids-limit 128 --ulimit nofile=1024:1024 \
+  --env-file .env -e NTWA_SESSION_COOKIE_SECURE=true \
+  --mount type=bind,src="$(pwd)/certs",dst=/certs,readonly \
+  --mount type=bind,src="$(pwd)/secrets/password",dst=/run/ntwa-password,readonly \
+  tsosc/nexttraceweb:latest \
+  --listen 30080 --https-listen 30443 \
+  --server-name trace.example.com \
+  --tls-cert /certs/fullchain.pem --tls-key /certs/privkey.pem \
+  --redirect-http-to https://trace.example.com:30443 \
+  --base-path /tools/nexttrace/ \
+  --auth-user viewer --auth-password-file /run/ntwa-password
+```
+
+访问 `https://trace.example.com:30443/tools/nexttrace/`。替换域名、证书目录和文件名；证书链、私钥及密码文件必须可被 UID `10001` 读取，私钥和密码文件不要开放给其他用户。密码文件仅含一行密码，可带结尾换行，最多 72 个 UTF-8 字节。容器只在 `/tmp` 保存权限为 `0600` 的 bcrypt 哈希。
+
+证书需要自行申请和续期，更新后重启容器加载；挂载目录时应包含证书符号链接的目标。HTTP 跳转地址使用浏览器实际访问的域名和端口，不包含二级路径。省略认证参数即可匿名访问，省略 `--base-path` 则使用根路径。
+
+| 参数 | 环境变量 | 默认值 / 用途 |
+| --- | --- | --- |
+| `--listen` | `NTWA_LISTEN` | `30080`；HTTP，可重复 |
+| `--https-listen` | `NTWA_HTTPS_LISTEN` | 提供证书后为 `30443`；HTTPS，可重复 |
+| `--server-name` | `NTWA_SERVER_NAME` | 未限制域名；可重复，未设置可信主机时自动填入 |
+| `--tls-cert` / `--tls-key` | `NTWA_TLS_CERT` / `NTWA_TLS_KEY` | 证书链及私钥路径，必须成对提供 |
+| `--redirect-http-to` | `NTWA_REDIRECT_HTTP_TO` | 默认关闭；HTTP 以 308 跳转至指定 HTTPS 源地址，保留路径和查询参数 |
+| `--base-path` | `NTWA_BASE_PATH` | `/`；自动补齐结尾斜杠，其他路径返回 404 |
+| `--auth-user` / `--auth-password-file` | `NTWA_AUTH_USER` / `NTWA_AUTH_PASSWORD_FILE` | 默认关闭；用户名及密码文件，必须成对提供 |
+| `--public-mode` / `--no-public-mode` | `NTWA_PUBLIC_MODE` | `false`；控制公开模式 |
+| `--trusted-hosts` | `NTWA_TRUSTED_HOSTS` | 可信主机列表；显式配置优先于 `server-name` 推导 |
+| `--trusted-proxies` | `NTWA_TRUSTED_PROXIES` | 外层代理 IP/CIDR，默认无 |
+| `--check-config` | — | 校验参数、文件和 Nginx 配置后退出，不启动服务 |
+| `--help` | — | 查看帮助 |
+
+命名参数优先于环境变量，再使用默认值。列表环境变量以逗号分隔；重复的命名参数替换整份对应列表。`--trusted-hosts` 和 `--trusted-proxies` 使用逗号分隔。旧位置参数优先于 `NTWA_LISTEN`，不能与 `--listen` 混用。HTTPS 默认不关闭 HTTP；需要跳转时显式设置 `--redirect-http-to`，且必须提供证书。
+
+校验时，在相同挂载和参数的启动命令末尾添加 `--check-config`。已有的其他应用环境变量继续生效。外部反代已剥离二级路径时，容器保持默认 `--base-path /`。
 
 ## 公开 Looking Glass
 
-公开模式默认关闭。对匿名访客开放时，先配置域名和 HTTPS 反代，再使用下面的 `.env` 执行上方启动命令。已有容器需要重新创建才能加载新环境变量。
+公开模式默认关闭。对匿名访客开放时，配置域名和 HTTPS，可使用上方内置 HTTPS 命令并省略认证参数，或使用下方外部反代。外部反代示例使用以下 `.env`；已有容器需重新创建才能加载新环境变量。内置 HTTPS 可通过 `--public-mode` 启用公开限制，`--server-name` 自动提供可信主机。
 
 ```bash
 umask 077
@@ -64,7 +115,7 @@ NTWA_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 EOF
 ```
 
-把 `trace.example.com` 替换为实际域名。代理网段示例适用于同机反代；其他拓扑需填写真实代理的准确 IP/CIDR。`127.0.0.1` 用于容器健康检查。密钥应保持固定，至少 32 字符，不要提交到仓库。
+把 `trace.example.com` 替换为实际域名。代理网段示例适用于同机反代；其他拓扑需填写真实代理的准确 IP/CIDR。使用内置 HTTPS 时无需设置可信代理；容器健康检查自动选择已配置的可信主机。密钥应保持固定，至少 32 字符，不要提交到仓库。
 
 | 项目 | 公开模式限制 |
 | --- | --- |
@@ -80,7 +131,7 @@ EOF
 
 超限设置会被拒绝，浏览器保存的旧设置同样受限；例如旧的 `40ms` 间隔需改为至少 `1s`。公开模式的健康检查只返回状态，网卡接口只返回管理员固定的网卡，原生错误详情不向访客披露。
 
-### HTTPS 反代
+### 外部 HTTPS 反代（可选）
 
 在已配置证书的 Nginx HTTPS `server` 中加入：
 
@@ -97,9 +148,9 @@ location / {
 }
 ```
 
-覆盖转发头，并只信任配置过的代理。SSE 不使用 WebSocket，不需要 `Upgrade`。服务端每 10 秒发送空闲保活，外层读超时应至少 25 秒。自用服务如需登录，可在外层添加 Basic Auth 等鉴权。
+覆盖转发头，并只信任配置过的代理。SSE 不使用 WebSocket，不需要 `Upgrade`。服务端每 10 秒发送空闲保活，外层读超时应至少 25 秒。自用服务可用容器认证参数，或在外层添加鉴权。
 
-### 二级路径
+### 外部反代二级路径
 
 挂载在 `/tools/nexttrace/` 时，用下面两段替换上方的 `location /`。反代必须剥离前缀，两个结尾斜杠都要保留；跳转也需保留查询参数。
 
@@ -172,7 +223,7 @@ docker logs --tail 100 ntwa
 
 后端为 Flask + Gunicorn/gevent，前端为原生 JavaScript 模块，无前端打包步骤。CI 覆盖 Python 3.12 / 3.14、Node 24、双架构构建和公开模式容器验收。
 
-本地运行需先安装 NextTrace v1.7.5 或后续兼容版本，并为探测进程提供所需权限：
+本地运行需先安装 NextTrace v1.7.6 或后续兼容版本，并为探测进程提供所需权限：
 
 ```bash
 python3.14 -m venv .venv
@@ -198,9 +249,9 @@ gunicorn --config gunicorn.conf.py --worker-class gevent --workers 1 \
 
 任务接口需要保留会话 Cookie；POST 使用 JSON。后端按 TTL 聚合逐探针事件，运行中快照最多每 100ms 推送一次；首次订阅、重连和终态立即发送。这与原生多响应者报告的统计口径不同。
 
-自建镜像：`docker build -t nexttraceweb:local .`。默认构建版本 `v1.7.5`、flavor `ntr`；可用 `NEXTTRACE_RELEASE_TAG` 和 `NEXTTRACE_ASSET_PREFIX` 调整，后者支持 `ntr`、`nexttrace`、`nexttrace-tiny`。下载使用仓库内固定 SHA256、GitHub 发布摘要或显式传入的 `NEXTTRACE_SHA256` 校验；缺失或不匹配时构建失败。发布镜像的版本由 CI 解析发布标签后固定。
+自建镜像：`docker build -t nexttraceweb:local .`。默认构建版本 `v1.7.6`、flavor `ntr`；可用 `NEXTTRACE_RELEASE_TAG` 和 `NEXTTRACE_ASSET_PREFIX` 调整，后者支持 `ntr`、`nexttrace`、`nexttrace-tiny`。下载使用仓库内固定 SHA256、GitHub 发布摘要或显式传入的 `NEXTTRACE_SHA256` 校验；缺失或不匹配时构建失败。发布镜像的版本由 CI 解析发布标签后固定。
 
-`ntr` 使用 `--json`，full / tiny 使用 `--mtr --json`，要求 [MTR JSON schema version 1](https://github.com/nxtrace/NTrace-core/blob/v1.7.5/docs/mtr-json.md)。不支持的二进制会报错，不回退 RAW 模式。
+`ntr` 使用 `--json`，full / tiny 使用 `--mtr --json`，要求 [MTR JSON schema version 1](https://github.com/nxtrace/NTrace-core/blob/v1.7.6/docs/mtr-json.md)。不支持的二进制会报错，不回退 RAW 模式。
 
 ## 许可证
 

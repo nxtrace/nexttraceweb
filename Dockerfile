@@ -1,4 +1,4 @@
-ARG NEXTTRACE_RELEASE_TAG=v1.7.5
+ARG NEXTTRACE_RELEASE_TAG=v1.7.6
 ARG NEXTTRACE_ASSET_PREFIX=ntr
 
 FROM python:3.14-slim
@@ -15,7 +15,7 @@ ENV NTWA_NEXTTRACE_FLAVOR=${NEXTTRACE_ASSET_PREFIX} \
 
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends nginx ca-certificates procps libcap2-bin && \
+    apt-get install -y --no-install-recommends nginx ca-certificates procps libcap2-bin apache2-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -44,17 +44,16 @@ COPY nexttrace_mtr.py /app/nexttrace_mtr.py
 COPY templates /app/templates
 COPY assets /app/assets
 COPY entrypoint.sh /app/entrypoint.sh
+COPY docker/configure.py docker/healthcheck.py docker/supervise.sh /app/docker/
 COPY nginx.conf /etc/nginx/nginx.conf.template
 
 RUN chmod +x /app/entrypoint.sh
 
 USER ntwa
 
-EXPOSE 30080
+EXPOSE 30080 30443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import sys, urllib.request; \
-response = urllib.request.urlopen('http://127.0.0.1:30080/healthz', timeout=4); \
-sys.exit(0 if response.status == 200 else 1)"
+    CMD ["python", "/app/docker/healthcheck.py"]
 
 ENTRYPOINT ["/app/entrypoint.sh"]

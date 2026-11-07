@@ -47,11 +47,62 @@ Open <http://127.0.0.1:30080/>. For a remote server, forward the port with `ssh 
 
 The image runs as UID `10001`; only the NextTrace executable has the `NET_RAW` file capability. Neither `--privileged` nor `NET_ADMIN` is needed. Do not enable a `no-new-privileges` setting that prevents the file capability from taking effect. Host networking preserves the probe node's routing.
 
-The final argument selects the listener: `127.0.0.1:30080` for localhost, `30080` for all IPv4 / IPv6 addresses, or `'[::1]:30080'` for IPv6 localhost. Use an unprivileged port. The default health check uses `30080`; override its command if you change that port.
+The final argument selects the listener: `127.0.0.1:30080` for localhost, `30080` for all IPv4 / IPv6 addresses, or `'[::1]:30080'` for IPv6 localhost. Use an unprivileged port. The built-in health check reaches the application through a container-local Unix socket and needs no changes for custom ports, HTTPS, authentication or sub-paths.
+
+## Container deployment options
+
+The container provides HTTPS, Basic Auth and sub-path routing without a separate Nginx configuration. This example uses existing certificates and the `.env` created in Quick start:
+
+```bash
+mkdir -p secrets
+read -rsp 'Access password: ' NTWA_PASSWORD; printf '\n'
+(umask 077; printf '%s\n' "$NTWA_PASSWORD" > secrets/password)
+unset NTWA_PASSWORD
+sudo chown 10001:10001 secrets/password
+sudo chmod 0400 secrets/password
+
+docker run -d --name ntwa --restart unless-stopped \
+  --network host --cap-drop ALL --cap-add NET_RAW \
+  --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+  --memory 512m --cpus 1 --pids-limit 128 --ulimit nofile=1024:1024 \
+  --env-file .env -e NTWA_SESSION_COOKIE_SECURE=true \
+  --mount type=bind,src="$(pwd)/certs",dst=/certs,readonly \
+  --mount type=bind,src="$(pwd)/secrets/password",dst=/run/ntwa-password,readonly \
+  tsosc/nexttraceweb:latest \
+  --listen 30080 --https-listen 30443 \
+  --server-name trace.example.com \
+  --tls-cert /certs/fullchain.pem --tls-key /certs/privkey.pem \
+  --redirect-http-to https://trace.example.com:30443 \
+  --base-path /tools/nexttrace/ \
+  --auth-user viewer --auth-password-file /run/ntwa-password
+```
+
+Open `https://trace.example.com:30443/tools/nexttrace/`. Replace the domain, certificate directory and filenames. UID `10001` must be able to read the certificate chain, private key and password file; keep the private key and password inaccessible to other users. The password file contains one nonempty line, with an optional trailing newline, at most 72 UTF-8 bytes. The container stores only a bcrypt hash under `/tmp`, with mode `0600`.
+
+Obtain and renew certificates separately, then restart the container to load updates. A mounted certificate directory must include any symlink targets. Use the browser-visible domain and port for the HTTP redirect origin, without a sub-path. Omit the auth options for anonymous access, or omit `--base-path` to serve at `/`.
+
+| Option | Environment variable | Default / purpose |
+| --- | --- | --- |
+| `--listen` | `NTWA_LISTEN` | `30080`; HTTP, repeatable |
+| `--https-listen` | `NTWA_HTTPS_LISTEN` | `30443` when certificates are supplied; HTTPS, repeatable |
+| `--server-name` | `NTWA_SERVER_NAME` | No domain restriction; repeatable, fills trusted hosts when unset |
+| `--tls-cert` / `--tls-key` | `NTWA_TLS_CERT` / `NTWA_TLS_KEY` | Certificate chain and private key paths; supply together |
+| `--redirect-http-to` | `NTWA_REDIRECT_HTTP_TO` | Off; HTTP 308 to the HTTPS origin, preserving path and query |
+| `--base-path` | `NTWA_BASE_PATH` | `/`; adds a trailing slash, other paths return 404 |
+| `--auth-user` / `--auth-password-file` | `NTWA_AUTH_USER` / `NTWA_AUTH_PASSWORD_FILE` | Off; username and password file, supply together |
+| `--public-mode` / `--no-public-mode` | `NTWA_PUBLIC_MODE` | `false`; public-mode restrictions |
+| `--trusted-hosts` | `NTWA_TRUSTED_HOSTS` | Trusted host list; explicit configuration overrides server-name inference |
+| `--trusted-proxies` | `NTWA_TRUSTED_PROXIES` | Outer proxy IPs/CIDRs; none by default |
+| `--check-config` | — | Validate options, files and Nginx configuration, then exit without starting services |
+| `--help` | — | Show usage |
+
+Named options override environment variables, then defaults apply. List environment variables use commas; repeated named options replace the entire corresponding list. `--trusted-hosts` and `--trusted-proxies` take comma-separated values. The legacy positional address overrides `NTWA_LISTEN` and cannot be combined with `--listen`. HTTPS keeps HTTP enabled; explicitly set `--redirect-http-to` with certificates to redirect it.
+
+Append `--check-config` to the same run command, with the same mounts and options, to validate a deployment. Other existing application environment variables remain supported. When an outer proxy already strips a sub-path, keep the container's default `--base-path /`.
 
 ## Public Looking Glass
 
-Public mode is off by default. Before accepting anonymous visitors, configure a domain and an HTTPS reverse proxy, then use the following `.env` with the run command above. Recreate an existing container to load changed environment variables.
+Public mode is off by default. Configure a domain and HTTPS before accepting anonymous visitors: use the built-in HTTPS command above without auth options, or the external proxy below. The following `.env` is for the external proxy setup. Recreate containers to load changed variables. With built-in HTTPS, add `--public-mode`; `--server-name` supplies trusted hosts automatically.
 
 ```bash
 umask 077
@@ -64,7 +115,7 @@ NTWA_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 EOF
 ```
 
-Replace `trace.example.com` with your domain. The proxy ranges assume a same-host reverse proxy; use the exact proxy IPs/CIDRs for other topologies. `127.0.0.1` allows the container health check. Keep the random secret stable, at least 32 characters long, and out of source control.
+Replace `trace.example.com` with your domain. The proxy ranges assume a same-host reverse proxy; use the exact proxy IPs/CIDRs for other topologies. Built-in HTTPS needs no trusted outer proxies; the container health check automatically uses a configured trusted host. Keep the random secret stable, at least 32 characters long, and out of source control.
 
 | Item | Public-mode limit |
 | --- | --- |
@@ -80,7 +131,7 @@ Replace `trace.example.com` with your domain. The proxy ranges assume a same-hos
 
 Excessive settings are rejected, including saved browser preferences. For example, an old `40ms` interval must be changed to at least `1s`. Public health responses expose only status, the devices endpoint exposes only the administrator's fixed interface, and native error details stay private.
 
-### HTTPS reverse proxy
+### External HTTPS reverse proxy (optional)
 
 Add this to an Nginx HTTPS `server` with certificates already configured:
 
@@ -97,9 +148,9 @@ location / {
 }
 ```
 
-Overwrite forwarding headers and trust only configured proxies. SSE does not use WebSockets or require `Upgrade`. The server sends idle keepalives every 10 seconds; allow at least 25 seconds between reads at the outer proxy. Add Basic Auth or other gateway authentication for restricted access if needed.
+Overwrite forwarding headers and trust only configured proxies. SSE does not use WebSockets or require `Upgrade`. The server sends idle keepalives every 10 seconds; allow at least 25 seconds between reads at the outer proxy. Use the container auth options or gateway authentication for restricted access.
 
-### Sub-path deployment
+### External proxy sub-path deployment
 
 To mount at `/tools/nexttrace/`, replace the `location /` above with these two blocks. Strip the prefix, retain both trailing slashes, and preserve query parameters in the redirect.
 
@@ -172,7 +223,7 @@ docker logs --tail 100 ntwa
 
 The backend uses Flask with Gunicorn/gevent; the frontend uses native JavaScript modules without a build step. CI covers Python 3.12 / 3.14, Node 24, both image architectures and public-mode container acceptance.
 
-For local development, install NextTrace v1.7.5 or a compatible later version and provide the required probe permissions:
+For local development, install NextTrace v1.7.6 or a compatible later version and provide the required probe permissions:
 
 ```bash
 python3.14 -m venv .venv
@@ -198,9 +249,9 @@ gunicorn --config gunicorn.conf.py --worker-class gevent --workers 1 \
 
 Keep session cookies when calling task endpoints; POST bodies are JSON. The backend aggregates probe events by TTL and publishes running snapshots at most once per 100ms; first subscriptions, reconnects and terminal states receive immediate snapshots. These statistics are separate from native multi-responder reports.
 
-Build locally with `docker build -t nexttraceweb:local .`. Defaults are `v1.7.5` and flavor `ntr`; override with `NEXTTRACE_RELEASE_TAG` and `NEXTTRACE_ASSET_PREFIX` (`ntr`, `nexttrace`, `nexttrace-tiny`). Downloads are verified against committed SHA256 values, GitHub release digests or an explicit `NEXTTRACE_SHA256`. Missing or mismatched digests fail the build. Published images use a release tag resolved and fixed by CI.
+Build locally with `docker build -t nexttraceweb:local .`. Defaults are `v1.7.6` and flavor `ntr`; override with `NEXTTRACE_RELEASE_TAG` and `NEXTTRACE_ASSET_PREFIX` (`ntr`, `nexttrace`, `nexttrace-tiny`). Downloads are verified against committed SHA256 values, GitHub release digests or an explicit `NEXTTRACE_SHA256`. Missing or mismatched digests fail the build. Published images use a release tag resolved and fixed by CI.
 
-`ntr` uses `--json`; full / tiny use `--mtr --json`. [MTR JSON schema version 1](https://github.com/nxtrace/NTrace-core/blob/v1.7.5/docs/mtr-json.md) is required. Unsupported binaries fail explicitly, without falling back to RAW mode.
+`ntr` uses `--json`; full / tiny use `--mtr --json`. [MTR JSON schema version 1](https://github.com/nxtrace/NTrace-core/blob/v1.7.6/docs/mtr-json.md) is required. Unsupported binaries fail explicitly, without falling back to RAW mode.
 
 ## License
 

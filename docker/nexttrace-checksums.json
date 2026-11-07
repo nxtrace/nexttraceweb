@@ -6,5 +6,13 @@
     "nexttrace-tiny_linux_arm64": "e49e5d5cf6fa45ec4b7ac739eba674412b1e044d7502d56878c67ec8cde6c1d4",
     "ntr_linux_amd64": "76004aefe42a10ccf10c113835031414e83760d32a06850deea1e977259f88ae",
     "ntr_linux_arm64": "499eb48f09a2905c33ec2615f9ba182f407ad3508023ccdba5d1cb234855ca74"
+  },
+  "v1.7.6": {
+    "nexttrace-tiny_linux_amd64": "9f219ba91318a3e1534bd28c661ef8019da42825ed48257035c508962d007271",
+    "nexttrace-tiny_linux_arm64": "aeab456e2f8aebd62cd1dd2d6458d2ec57b38f5d707e196bab41f999ff898810",
+    "nexttrace_linux_amd64": "3868c8190c961b534b8f2d0ed528796fc48d46a818ee5268fe2dfc6aa44b3a5e",
+    "nexttrace_linux_arm64": "e4c4e818f6cebf8d8ee3df3976a304c8bac2bb3bea3160a23fd5bce18095c9e6",
+    "ntr_linux_amd64": "454170123e90194cc29c2cc0bf98956a8b91544e1cf529a9622680744ea9f01a",
+    "ntr_linux_arm64": "63f3b3b7621503955a38c226ff1607f246eb95852d19b5b8f6ac19d1d7fa22c3"
   }
 }

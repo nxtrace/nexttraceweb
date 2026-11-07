@@ -225,7 +225,7 @@ jobs:
           cid="$(docker run -d --network none --cap-drop ALL --cap-add NET_RAW \
             --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
             --memory 512m --cpus 1 --pids-limit 128 --ulimit nofile=1024:1024 \
-            --env-file "$RUNNER_TEMP/ntwa-smoke.env" nexttraceweb:smoke)"
+            --env-file "$RUNNER_TEMP/ntwa-smoke.env" nexttraceweb:smoke 30080)"
           echo "CONTAINER_ID=${cid}" >> "$GITHUB_ENV"
           # Keep every probe inside this isolated network namespace.
           pid="$(docker inspect --format '{{.State.Pid}}' "$cid")"
@@ -234,7 +234,7 @@ jobs:
       - name: Wait for healthz
         run: |
           for _ in $(seq 1 60); do
-            if docker exec "$CONTAINER_ID" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:30080/healthz',timeout=2).close()"; then
+            if docker exec "$CONTAINER_ID" python /app/docker/healthcheck.py; then
               exit 0
             fi
             sleep 2
@@ -254,15 +254,78 @@ jobs:
           pid="$(docker inspect --format '{{.State.Pid}}' "$CONTAINER_ID")"
           sudo nsenter -t "$pid" -n python3 tests/container_shutdown.py "$CONTAINER_ID"
 
+      - name: Start TLS deployment with authentication and a sub-path
+        env:
+          EXPECTED_NEXTTRACE_TAG: ${{ needs.resolve-nexttrace-release.outputs.tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ntwa-deployment"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj /CN=localhost -addext 'subjectAltName=DNS:localhost' \
+            -addext 'basicConstraints=critical,CA:TRUE' \
+            -addext 'keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign' \
+            -keyout "$RUNNER_TEMP/ntwa-deployment/key.pem" \
+            -out "$RUNNER_TEMP/ntwa-deployment/cert.pem"
+          python - <<'PY'
+          import os, secrets
+          from pathlib import Path
+          directory = Path(os.environ['RUNNER_TEMP']) / 'ntwa-deployment'
+          (directory / 'password').write_text(secrets.token_urlsafe(32) + '\n')
+          (directory / 'deployment.env').write_text('NTWA_SECRET_KEY=' + secrets.token_hex(32) + '\n')
+          # These are disposable CI fixtures, readable by the container's UID 10001.
+          directory.chmod(0o755)
+          for path in directory.iterdir():
+              path.chmod(0o644)
+          PY
+          cid="$(docker run -d --network none --cap-drop ALL --cap-add NET_RAW \
+            --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+            --memory 512m --cpus 1 --pids-limit 128 --ulimit nofile=1024:1024 \
+            --mount "type=bind,src=$RUNNER_TEMP/ntwa-deployment,dst=/run/ntwa-secrets,readonly" \
+            --env-file "$RUNNER_TEMP/ntwa-deployment/deployment.env" \
+            -e EXPECTED_NEXTTRACE_TAG="$EXPECTED_NEXTTRACE_TAG" \
+            nexttraceweb:smoke --listen 127.0.0.1:30081 --https-listen 127.0.0.1:30443 \
+            --server-name localhost --tls-cert /run/ntwa-secrets/cert.pem \
+            --tls-key /run/ntwa-secrets/key.pem --redirect-http-to https://localhost:30443 \
+            --base-path /tools/nexttrace --auth-user deploy \
+            --auth-password-file /run/ntwa-secrets/password --public-mode)"
+          echo "DEPLOYMENT_CONTAINER_ID=${cid}" >> "$GITHUB_ENV"
+          pid="$(docker inspect --format '{{.State.Pid}}' "$cid")"
+          sudo nsenter -t "$pid" -n ip route add default dev lo
+
+      - name: Verify TLS deployment
+        run: |
+          for _ in $(seq 1 60); do
+            state="$(docker inspect --format '{{.State.Health.Status}}' "$DEPLOYMENT_CONTAINER_ID")"
+            if [ "$state" = healthy ]; then
+              break
+            fi
+            if [ "$state" = unhealthy ]; then
+              docker logs "$DEPLOYMENT_CONTAINER_ID"
+              exit 1
+            fi
+            sleep 2
+          done
+          test "$state" = healthy
+          docker exec -i "$DEPLOYMENT_CONTAINER_ID" python - < tests/container_deployment.py
+          docker stop -t 10 "$DEPLOYMENT_CONTAINER_ID" >/dev/null
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$DEPLOYMENT_CONTAINER_ID")" = 143
+
       - name: Dump logs on failure
         if: failure()
-        run: docker logs "$CONTAINER_ID"
+        run: |
+          docker logs "$CONTAINER_ID"
+          if [ -n "${DEPLOYMENT_CONTAINER_ID:-}" ]; then
+            docker logs "$DEPLOYMENT_CONTAINER_ID"
+          fi
 
       - name: Cleanup container
         if: always()
         run: |
           docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+          if [ -n "${DEPLOYMENT_CONTAINER_ID:-}" ]; then
+            docker rm -f "$DEPLOYMENT_CONTAINER_ID" >/dev/null 2>&1 || true
+          fi
           rm -f "$RUNNER_TEMP/ntwa-smoke.env"
+          rm -rf "$RUNNER_TEMP/ntwa-deployment"
 
   docker-buildx-check:
     runs-on: ubuntu-latest

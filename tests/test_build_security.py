@@ -16,19 +16,19 @@ spec.loader.exec_module(download)
 
 class DownloadSecurityTests(unittest.TestCase):
     def test_pinned_flavors_and_architectures_do_not_need_metadata_network(self):
-        pins = json.loads(Path(download.__file__).with_name('nexttrace-checksums.json').read_text())['v1.7.5']
+        pins = json.loads(Path(download.__file__).with_name('nexttrace-checksums.json').read_text())['v1.7.6']
         with mock.patch.dict(os.environ, {'NEXTTRACE_SHA256': ''}):
             with mock.patch.object(download.urllib.request, 'urlopen') as network:
                 for asset, expected in pins.items():
                     with self.subTest(asset=asset):
-                        self.assertEqual(download.expected_digest('v1.7.5', asset), expected)
+                        self.assertEqual(download.expected_digest('v1.7.6', asset), expected)
                 network.assert_not_called()
 
     def test_invalid_explicit_digest_is_rejected_without_fallback(self):
         with mock.patch.dict(os.environ, {'NEXTTRACE_SHA256': 'invalid'}):
             with mock.patch.object(download.urllib.request, 'urlopen') as network:
                 with self.assertRaises(SystemExit):
-                    download.expected_digest('v1.7.5', 'ntr_linux_amd64')
+                    download.expected_digest('v1.7.6', 'ntr_linux_amd64')
                 network.assert_not_called()
 
     def test_release_without_digest_is_rejected(self):
@@ -42,7 +42,7 @@ class DownloadSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='ntwa-download-test-') as folder:
             output = Path(folder) / 'nexttrace'
             environment = dict(TARGETOS='linux', TARGETARCH='amd64', NEXTTRACE_ASSET_PREFIX='ntr',
-                               NEXTTRACE_RELEASE_TAG='v1.7.5', NEXTTRACE_SHA256=hashlib.sha256(b'expected').hexdigest())
+                               NEXTTRACE_RELEASE_TAG='v1.7.6', NEXTTRACE_SHA256=hashlib.sha256(b'expected').hexdigest())
             with mock.patch.dict(os.environ, environment):
                 with mock.patch.object(download, 'open', side_effect=lambda *args: output.open(*args[1:]), create=True):
                     with mock.patch.object(download.urllib.request, 'urlopen', return_value=io.BytesIO(b'corrupted')):

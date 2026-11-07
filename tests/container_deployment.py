@@ -4,7 +4,6 @@ import http.cookiejar
 import json
 import os
 from pathlib import Path
-import re
 import ssl
 import stat
 import subprocess
@@ -12,6 +11,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+
+from nexttrace_mtr import build_mtr_json_command
 
 
 PREFIX = '/tools/nexttrace'
@@ -68,10 +69,15 @@ def snapshot(stream):
 def main():
     subprocess.run(['python', '/app/docker/healthcheck.py'], check=True, timeout=5)
     expected = os.environ['EXPECTED_NEXTTRACE_TAG']
-    version = subprocess.run(['/usr/local/bin/nexttrace', '--version'],
-                             capture_output=True, text=True, check=True, timeout=5)
-    check(re.search(r'(?<![\w.])' + re.escape(expected) + r'(?![\w.])',
-                    version.stdout + version.stderr), 'Native version differs from the resolved release')
+    command = build_mtr_json_command('/usr/local/bin/nexttrace', [
+        '127.0.0.1', '-q', '1', '--max-hops', '1', '--ttl-time', '1000',
+        '--data-provider', 'disable-geoip', '--no-rdns',
+    ], os.environ.get('NTWA_NEXTTRACE_FLAVOR', 'nexttrace'))
+    probe = subprocess.run(command, capture_output=True, text=True, check=True, timeout=10)
+    events = [json.loads(line) for line in probe.stdout.splitlines() if line.strip()]
+    start = next((event for event in events if event.get('type') == 'start'), {})
+    check(start.get('schema_version') == 1 and start.get('version') == expected,
+          f'Native MTR JSON version differs from {expected}: {start.get("version")}')
     password = (SECRETS / 'password').read_text().removesuffix('\n')
     auth_file = Path('/tmp/ntwa.htpasswd')
     check(stat.S_IMODE(auth_file.stat().st_mode) == 0o600, 'Authentication file permissions differ from 0600')

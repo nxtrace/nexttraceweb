@@ -221,12 +221,12 @@ docker logs --tail 100 ntwa
 
 ## Source and API
 
-The backend uses Flask with Gunicorn/gevent; the frontend uses native JavaScript modules without a build step. CI covers Python 3.12 / 3.14, Node 24, both image architectures and public-mode container acceptance.
+The backend uses Flask with Gunicorn/gevent; the frontend uses native JavaScript modules without a build step. CI covers Python 3.12 / 3.15, Node 24, both image architectures and public-mode container acceptance.
 
 For local development, install NextTrace v1.7.6 or a compatible later version and provide the required probe permissions:
 
 ```bash
-python3.14 -m venv .venv
+python3.15 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 export NTWA_NEXTTRACE_PATH=/path/to/ntr

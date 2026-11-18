@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
+        python-version: ["3.12", "3.15"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -94,7 +94,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
           cache: pip
 
       - name: Install dependencies
@@ -118,7 +118,7 @@ jobs:
               "ntwa/config.py": ["NTWA_SECRET_KEY"],
               "ntwa/http.py": ["/healthz"],
               "Dockerfile": [
-                  "FROM python:3.14-slim",
+                  "FROM python:3.15-slim-trixie",
                   "HEALTHCHECK",
               ],
               "requirements.txt": [
@@ -161,17 +161,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
           cache: pip
 
-      - name: Verify cp314 linux wheels
+      - name: Verify cp315 linux wheels
         run: |
           set -euo pipefail
           common_args=(
             --only-binary=:all:
-            --python-version 3.14
+            --python-version 3.15
             --implementation cp
-            --abi cp314
+            --abi cp315
             -r requirements.txt
           )
 

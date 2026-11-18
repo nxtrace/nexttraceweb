@@ -1,7 +1,7 @@
 ARG NEXTTRACE_RELEASE_TAG=v1.7.6
 ARG NEXTTRACE_ASSET_PREFIX=ntr
 
-FROM python:3.15-slim
+FROM python:3.15-slim-trixie
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -13,9 +13,14 @@ ENV NTWA_NEXTTRACE_FLAVOR=${NEXTTRACE_ASSET_PREFIX} \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && \
+# Use the signed NGINX stable repository for the NGINX2Root fixes.
+ADD --chmod=644 --checksum=sha256:55385da31d198fa6a5012d40ae98ecb272a6c4e8fffffba94719ffd3e87de37a https://nginx.org/keys/nginx_signing.key /usr/share/keyrings/nginx-archive-keyring.asc
+RUN printf '%s\n' 'deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.asc] https://nginx.org/packages/debian trixie nginx' > /etc/apt/sources.list.d/nginx.list && \
+    apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends nginx ca-certificates procps libcap2-bin apache2-utils && \
+    nginx_version="$(nginx -v 2>&1)" && \
+    dpkg --compare-versions "${nginx_version#nginx version: nginx/}" ge 1.30.7 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -23,7 +28,8 @@ COPY requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt && \
     python -m pip check && \
     python -m pip uninstall -y pip && \
-    rm -rf /usr/local/lib/python3.14/ensurepip /tmp/requirements.txt
+    python_stdlib="$(python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" && \
+    rm -rf "${python_stdlib}/ensurepip" /tmp/requirements.txt
 
 COPY docker/download_nexttrace.py /tmp/download_nexttrace.py
 COPY docker/nexttrace-checksums.json /tmp/nexttrace-checksums.json

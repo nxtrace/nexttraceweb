@@ -221,12 +221,12 @@ docker logs --tail 100 ntwa
 
 ## 源码与接口
 
-后端为 Flask + Gunicorn/gevent，前端为原生 JavaScript 模块，无前端打包步骤。CI 覆盖 Python 3.12 / 3.14、Node 24、双架构构建和公开模式容器验收。
+后端为 Flask + Gunicorn/gevent，前端为原生 JavaScript 模块，无前端打包步骤。CI 覆盖 Python 3.12 / 3.15、Node 24、双架构构建和公开模式容器验收。
 
 本地运行需先安装 NextTrace v1.7.6 或后续兼容版本，并为探测进程提供所需权限：
 
 ```bash
-python3.14 -m venv .venv
+python3.15 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 export NTWA_NEXTTRACE_PATH=/path/to/ntr
